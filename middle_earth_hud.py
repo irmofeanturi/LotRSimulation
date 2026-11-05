@@ -340,7 +340,6 @@ HOVER_TRACK = None                 # name of the route under the mouse (or None)
 LEGEND_ROWS = []                   # [(pygame.Rect, track name)] filled by draw_panel
 _SPLINES = {}
 _SCREEN_CACHE = {"key": None}      # routes in screen px + the dashed layer, per view
-_LAYER = None                      # reused transparent layer for dimmed routes
 _LABEL_FONT = None
 
 
@@ -395,15 +394,45 @@ def _mix(c, other, t):
     return tuple(int(a * (1 - t) + b * t) for a, b in zip(c, other))
 
 
+# Route graphics are drawn at SS x resolution and scaled down smoothly: pygame
+# draws thick lines and circles without anti-aliasing, so this keeps the ink
+# outlines from looking pixelated. All functions below take screen (1x) points.
+SS = 2
+
+
+def _ss(pts):
+    return [(x * SS, y * SS) for x, y in pts]
+
+
 def _thick_line(surf, color, pts, width):
     """Polyline with round joins and caps (pygame's own thick lines have gaps)."""
     if len(pts) < 2:
         return
-    r = max(1, width // 2)
-    pygame.draw.lines(surf, color, False, pts, width)
-    for p in pts[::3]:                     # round joins (the curve is dense and smooth)
-        pygame.draw.circle(surf, color, p, r)
-    pygame.draw.circle(surf, color, pts[-1], r)
+    # Drop points closer than ~2 px to the previous one (the spline is dense).
+    kept = [pts[0]]
+    for p in pts[1:-1]:
+        if abs(p[0] - kept[-1][0]) + abs(p[1] - kept[-1][1]) >= 2.5:
+            kept.append(p)
+    kept.append(pts[-1])
+    pts = _ss(kept)
+    h = width * SS / 2
+    lo_x, lo_y, hi_x, hi_y = -h, -h, MAP_W * SS + h, MAP_H * SS + h
+    # One filled quad per segment: clean edges (pygame's wide lines are built
+    # from parallel 1 px lines and look ragged), round joins and caps.
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        if (max(ax, bx) < lo_x or min(ax, bx) > hi_x or
+                max(ay, by) < lo_y or min(ay, by) > hi_y):
+            continue                                   # off screen
+        dx, dy = bx - ax, by - ay
+        ln = math.hypot(dx, dy)
+        if ln < 1e-6:
+            continue
+        nx, ny = -dy / ln * h, dx / ln * h
+        pygame.draw.polygon(surf, color, ((ax + nx, ay + ny), (bx + nx, by + ny),
+                                          (bx - nx, by - ny), (ax - nx, ay - ny)))
+        pygame.draw.circle(surf, color, (bx, by), h)
+    if lo_x <= pts[0][0] <= hi_x and lo_y <= pts[0][1] <= hi_y:
+        pygame.draw.circle(surf, color, pts[0], h)
 
 
 def _dashes(pts, on, off):
@@ -432,76 +461,125 @@ def _dashes(pts, on, off):
 def _chevrons(surf, pts, color, every=64):
     """Small direction arrows along a polyline, like a navigation app."""
     dist_to_next = every * 0.6
+    s = 3.2
     for a, b in zip(pts, pts[1:]):
         seg = math.dist(a, b)
         while seg > 0 and dist_to_next <= seg:
             t = dist_to_next / seg
             cx, cy = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
             dx, dy = (b[0] - a[0]) / seg, (b[1] - a[1]) / seg
-            s = 3.2
             tip = (cx + dx * s, cy + dy * s)
             l = (cx - dx * s - dy * s, cy - dy * s + dx * s)
             r = (cx - dx * s + dy * s, cy - dy * s - dx * s)
-            pygame.draw.lines(surf, color, False, [l, tip, r], 2)
+            pygame.draw.lines(surf, color, False, _ss([l, tip, r]), 2 * SS)
             dist_to_next += every
         dist_to_next -= seg
 
 
-def _draw_ahead(layer, track, highlight):
+FADE = 0.68                        # how far non-hovered routes fade into the parchment
+
+
+def _fade(color, fade):
+    """Colour washed towards the parchment (used for routes that step back)."""
+    if not fade:
+        return color
+    rgb = _mix(color[:3], PARCHMENT, FADE)
+    return (*rgb, color[3]) if len(color) == 4 else rgb
+
+
+def _circle(surf, color, p, r):
+    pygame.draw.circle(surf, color, (p[0] * SS, p[1] * SS), r * SS)
+
+
+def _big_layer(slot):
+    """Reusable transparent SS x layer (one per slot), cleared."""
+    size = (MAP_W * SS, MAP_H * SS)
+    layer = _SCREEN_CACHE.get(slot)
+    if layer is None or layer.get_size() != size:
+        layer = _SCREEN_CACHE[slot] = pygame.Surface(size, pygame.SRCALPHA)
+    layer.fill((0, 0, 0, 0))
+    return layer
+
+
+def _bbox(tracks):
+    """Screen rect around the given routes (plus room for seals and halos)."""
+    key = ("bbox", _view_key(), tuple(t["name"] for t in tracks))
+    if key not in _SCREEN_CACHE:
+        pts = [p for t in tracks for p in _screen_routes()[t["name"]]]
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        r = pygame.Rect(min(xs) - 24, min(ys) - 24, max(xs) - min(xs) + 48, max(ys) - min(ys) + 48)
+        _SCREEN_CACHE[key] = r.clip(pygame.Rect(0, 0, MAP_W, MAP_H))
+    return _SCREEN_CACHE[key]
+
+
+def _blit_down(surf, layer, rect, alpha=None):
+    """Scale the `rect` part of an SS x layer down onto the map (the anti-aliasing)."""
+    if rect.w <= 0 or rect.h <= 0:
+        return
+    src = pygame.Rect(rect.x * SS, rect.y * SS, rect.w * SS, rect.h * SS)
+    img = pygame.transform.smoothscale(layer.subsurface(src), rect.size)
+    if alpha is not None:
+        img.set_alpha(alpha)
+    surf.blit(img, rect.topleft)
+
+
+def _draw_ahead(layer, track, highlight, fade=False):
     """The whole route as a dashed quill line (the road still ahead shows through)."""
     col = track["color"]
-    ahead_col = col if highlight else _mix(col, INK, 0.35)
+    ahead_col = _fade(col if highlight else _mix(col, INK, 0.35), fade)
+    casing = _fade(INK if highlight else INK_SOFT, fade)
     for piece in _dashes(_screen_routes()[track["name"]], 9, 7):
-        _thick_line(layer, INK_SOFT if not highlight else INK, piece, 4 if not highlight else 6)
-        _thick_line(layer, ahead_col, piece, 2 if not highlight else 3)
+        _thick_line(layer, casing, piece, 6 if highlight else 4)
+        _thick_line(layer, ahead_col, piece, 3 if highlight else 2)
 
 
 def _ahead_layer(hovered):
     """Dashed lines of all non-hovered routes, cached until view or hover change."""
     key = (_view_key(), hovered["name"] if hovered else None)
     if _SCREEN_CACHE.get("ahead_key") != key:
-        layer = pygame.Surface((MAP_W, MAP_H), pygame.SRCALPHA)
+        big = _big_layer("big_ahead")
         for track in TRACKS:
             if track is not hovered:
-                _draw_ahead(layer, track, False)
+                _draw_ahead(big, track, False, fade=hovered is not None)
         if hovered is not None:
-            layer.set_alpha(90)
+            _draw_ahead(big, hovered, True)
+        layer = pygame.Surface((MAP_W, MAP_H), pygame.SRCALPHA)
+        _blit_down(layer, big, _bbox(TRACKS))
         _SCREEN_CACHE["ahead"], _SCREEN_CACHE["ahead_key"] = layer, key
     return _SCREEN_CACHE["ahead"]
 
 
-def _draw_route(layer, track, day, highlight):
+def _draw_route(layer, track, day, highlight, fade=False):
     """Draw the travelled part of one route (ink casing, coloured core, chevrons)."""
-    col = track["color"]
+    col = _fade(track["color"], fade)
     w = ROUTE_W + (2 if highlight else 0)
     if day < track["keyframes"][0][0]:
         return None
     done = _traveled_px(track, day)
     if len(done) > 1:
-        _thick_line(layer, INK, done, w + 2 * CASING)            # ink casing
+        _thick_line(layer, _fade(INK, fade), done, w + 2 * CASING)   # ink casing
         _thick_line(layer, col, done, w)                          # coloured core
         _chevrons(layer, done, _mix(col, (255, 250, 236), 0.75))  # direction
     return done[-1]
 
 
-def _draw_station(surf, p, fill, ring, r=5):
-    x, y = p
-    pygame.draw.circle(surf, ring, (x, y), r + 2)
-    pygame.draw.circle(surf, fill, (x, y), r)
-    pygame.draw.circle(surf, ring, (x, y), max(1, r - 3))      # seal centre
+def _draw_station(surf, p, fill, ring, r=5, fade=False):
+    fill, ring = _fade(fill, fade), _fade(ring, fade)
+    _circle(surf, ring, p, r + 2)
+    _circle(surf, fill, p, r)
+    _circle(surf, ring, p, max(1, r - 3))                      # seal centre
 
 
-def _draw_puck(surf, p, color, highlight):
+def _draw_puck(surf, p, color, highlight, fade=False):
     """Current position: a wax-seal 'you are here' marker with a soft halo."""
-    x, y = int(p[0]), int(p[1])
-    halo = pygame.Surface((44, 44), pygame.SRCALPHA)
-    pygame.draw.circle(halo, (*color, 70 if highlight else 45), (22, 22), 20 if highlight else 16)
-    surf.blit(halo, (x - 22, y - 22))
+    color = _fade(color, fade)
+    if not fade:
+        _circle(surf, (*color, 70 if highlight else 45), p, 20 if highlight else 16)
     r = 9 if highlight else 8
-    pygame.draw.circle(surf, INK, (x, y), r + 2)
-    pygame.draw.circle(surf, (250, 244, 228), (x, y), r)          # parchment rim
-    pygame.draw.circle(surf, color, (x, y), r - 2)
-    pygame.draw.circle(surf, _mix(color, (255, 255, 255), 0.6), (x - 2, y - 2), 2)
+    _circle(surf, _fade(INK, fade), p, r + 2)
+    _circle(surf, (250, 244, 228), p, r)                       # parchment rim
+    _circle(surf, color, p, r - 2)
+    _circle(surf, _mix(color, (255, 255, 255), 0.6), (p[0] - 2, p[1] - 2), 2)
 
 
 def _draw_label(surf, p, text, placed):
@@ -538,23 +616,18 @@ def draw_waypoints(surf):
 
 
 def draw_tracks(surf, day):
-    """All routes, their stations and current positions; the hovered route on top."""
-    global _LAYER
+    """All routes, their stations and current positions; the hovered route on top
+    (the others fade into the parchment). Everything is drawn on one SS x layer
+    and scaled down once."""
     hovered = next((t for t in TRACKS if t["name"] == HOVER_TRACK), None)
+    fade = hovered is not None
     surf.blit(_ahead_layer(hovered), (0, 0))
-    if hovered is None:
-        others = surf                              # nothing to dim: draw directly
-    else:
-        if _LAYER is None or _LAYER.get_size() != (MAP_W, MAP_H):
-            _LAYER = pygame.Surface((MAP_W, MAP_H), pygame.SRCALPHA)
-        others = _LAYER
-        others.fill((0, 0, 0, 0))
-        others.set_alpha(90)                       # everything else steps back
+    big = _big_layer("big")
     pucks = []
     for track in TRACKS:
         if track is hovered:
             continue
-        pos = _draw_route(others, track, day, False)
+        pos = _draw_route(big, track, day, False, fade)
         if pos is not None and track_active(track, day):
             pucks.append((pos, track))
     # Stations: one seal per place, filled in the colour of the group that got
@@ -568,26 +641,25 @@ def draw_tracks(surf, day):
             if prev is None or (d <= day and (prev[0] > day or d >= prev[0])):
                 latest[loc] = (d, track["color"])
     for loc, (d, color) in latest.items():
-        _draw_station(others, world(LOCATIONS[loc]), color if d <= day else (250, 244, 228), INK)
+        _draw_station(big, world(LOCATIONS[loc]), color if d <= day else (250, 244, 228), INK,
+                      fade=fade)
     for pos, track in pucks:
-        _draw_puck(others, pos, track["color"], False)
-    if others is not surf:
-        surf.blit(others, (0, 0))
+        _draw_puck(big, pos, track["color"], False, fade)
 
+    first = {}
     if hovered is not None:
-        _draw_ahead(surf, hovered, True)
-        pos = _draw_route(surf, hovered, day, True)
-        first = {}                                  # first arrival per place
-        for d, loc in _stations(hovered):
+        pos = _draw_route(big, hovered, day, True)
+        for d, loc in _stations(hovered):               # first arrival per place
             first.setdefault(loc, d)
         for loc, d in first.items():
-            p = world(LOCATIONS[loc])
-            _draw_station(surf, p, hovered["color"] if day >= d else (250, 244, 228), INK, 6)
-        placed = []
-        for loc in first:
-            _draw_label(surf, world(LOCATIONS[loc]), loc, placed)
+            _draw_station(big, world(LOCATIONS[loc]),
+                          hovered["color"] if day >= d else (250, 244, 228), INK, 6)
         if pos is not None and track_active(hovered, day):
-            _draw_puck(surf, pos, hovered["color"], True)
+            _draw_puck(big, pos, hovered["color"], True)
+    _blit_down(surf, big, _bbox(TRACKS))
+    placed = []
+    for loc in first:
+        _draw_label(surf, world(LOCATIONS[loc]), loc, placed)
 
 
 def _seg_dist(p, a, b):
