@@ -31,6 +31,7 @@ python3 middle_earth_hud.py
 | click/drag the timeline | jump to any moment (bottom-left)             |
 | `R`                     | reset to the start                           |
 | `Esc`                   | quit                                         |
+| hover a route / legend  | highlight that group's route and name its stations |
 
 ## Real film runtime
 
@@ -64,6 +65,16 @@ the films.
 - **Bottom bar**: a **timeline** (left) with event markers and colour-coded film
   segments (FotR / TTT / RotK), and on the right a **speed slider** and a
   **zoom slider** (1× … 100×).
+
+## Routes
+
+Routes are drawn like in a navigation app, but in ink on parchment: the part a
+group has already travelled is a solid line with an ink border and direction
+arrows, the road still ahead is a dashed quill line, and the current position is
+a small seal with a soft halo. Every station on a route is marked: filled in the
+group's colour once reached, hollow before. **Hover** a route on the map or its
+entry in the legend to highlight it (the other routes fade) and show the names
+of its stations.
 
 ## Zoom
 

@@ -329,32 +329,298 @@ def draw_map_background(surf, bg):
 
 
 # --------------------------------------------------------------------------- Map markers
+# Routes. Look: like a modern navigation app (outlined route, direction chevrons, a
+# "you are here" puck) but drawn as ink on parchment: sepia casing, a dashed
+# quill line for the road still ahead, stations as small seals.
+INK = (52, 36, 24)                 # sepia ink for casings and outlines
+INK_SOFT = (52, 36, 24, 150)
+ROUTE_W = 5                        # core width of the travelled route (px)
+CASING = 2                         # ink border on each side (px)
+HOVER_TRACK = None                 # name of the route under the mouse (or None)
+LEGEND_ROWS = []                   # [(pygame.Rect, track name)] filled by draw_panel
+_SPLINES = {}
+_SCREEN_CACHE = {"key": None}      # routes in screen px + the dashed layer, per view
+_LAYER = None                      # reused transparent layer for dimmed routes
+_LABEL_FONT = None
+
+
+def _route(track):
+    """Cached dense polyline of a whole route (normalised)."""
+    if track["name"] not in _SPLINES:
+        _SPLINES[track["name"]] = full_spline(track)
+    return _SPLINES[track["name"]]
+
+
+def _view_key():
+    return (round(ZOOM, 4), round(CAM_X, 2), round(CAM_Y, 2))
+
+
+def _screen_routes():
+    """Every route as screen points; recomputed only when the view changes."""
+    key = _view_key()
+    if _SCREEN_CACHE.get("routes_key") != key:
+        _SCREEN_CACHE["routes"] = {t["name"]: [world(p) for p in _route(t)] for t in TRACKS}
+        _SCREEN_CACHE["routes_key"] = key
+    return _SCREEN_CACHE["routes"]
+
+
+def _traveled_px(track, day):
+    """Screen polyline of the part already travelled (prefix of the cached route
+    plus the current, partly travelled leg)."""
+    kfs = track["keyframes"]
+    full = _screen_routes()[track["name"]]
+    if day >= kfs[-1][0]:
+        return full
+    pts = _control_points(track)
+    for i in range(len(kfs) - 1):
+        d0, d1 = kfs[i][0], kfs[i + 1][0]
+        if d0 <= day < d1:
+            done = full[:i * SEG_SAMPLES + 1]
+            t = (day - d0) / (d1 - d0)
+            done += [world(cr_eval(pts, i, t * s / SEG_SAMPLES)) for s in range(1, SEG_SAMPLES + 1)]
+            return done
+    return full[:1]
+
+
+def _stations(track):
+    """Named places of a route in travel order: [(day of arrival, name)], no repeats."""
+    out = []
+    for day, loc in track["keyframes"]:
+        if isinstance(loc, str) and (not out or out[-1][1] != loc):
+            out.append((day, loc))
+    return out
+
+
+def _mix(c, other, t):
+    return tuple(int(a * (1 - t) + b * t) for a, b in zip(c, other))
+
+
+def _thick_line(surf, color, pts, width):
+    """Polyline with round joins and caps (pygame's own thick lines have gaps)."""
+    if len(pts) < 2:
+        return
+    r = max(1, width // 2)
+    pygame.draw.lines(surf, color, False, pts, width)
+    for p in pts[::3]:                     # round joins (the curve is dense and smooth)
+        pygame.draw.circle(surf, color, p, r)
+    pygame.draw.circle(surf, color, pts[-1], r)
+
+
+def _dashes(pts, on, off):
+    """Split a polyline into dash pieces of `on` px separated by `off` px."""
+    pieces, cur, pos, drawing = [], [pts[0]], 0.0, True
+    for a, b in zip(pts, pts[1:]):
+        seg = math.dist(a, b)
+        t0 = 0.0
+        while seg > 0 and t0 < seg:
+            left = (on if drawing else off) - pos
+            step = min(left, seg - t0)
+            t0 += step
+            pos += step
+            p = (a[0] + (b[0] - a[0]) * t0 / seg, a[1] + (b[1] - a[1]) * t0 / seg)
+            if drawing:
+                cur.append(p)
+            if pos >= (on if drawing else off) - 1e-6:
+                if drawing and len(cur) > 1:
+                    pieces.append(cur)
+                drawing, pos, cur = not drawing, 0.0, [p]
+    if drawing and len(cur) > 1:
+        pieces.append(cur)
+    return pieces
+
+
+def _chevrons(surf, pts, color, every=64):
+    """Small direction arrows along a polyline, like a navigation app."""
+    dist_to_next = every * 0.6
+    for a, b in zip(pts, pts[1:]):
+        seg = math.dist(a, b)
+        while seg > 0 and dist_to_next <= seg:
+            t = dist_to_next / seg
+            cx, cy = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+            dx, dy = (b[0] - a[0]) / seg, (b[1] - a[1]) / seg
+            s = 3.2
+            tip = (cx + dx * s, cy + dy * s)
+            l = (cx - dx * s - dy * s, cy - dy * s + dx * s)
+            r = (cx - dx * s + dy * s, cy - dy * s - dx * s)
+            pygame.draw.lines(surf, color, False, [l, tip, r], 2)
+            dist_to_next += every
+        dist_to_next -= seg
+
+
+def _draw_ahead(layer, track, highlight):
+    """The whole route as a dashed quill line (the road still ahead shows through)."""
+    col = track["color"]
+    ahead_col = col if highlight else _mix(col, INK, 0.35)
+    for piece in _dashes(_screen_routes()[track["name"]], 9, 7):
+        _thick_line(layer, INK_SOFT if not highlight else INK, piece, 4 if not highlight else 6)
+        _thick_line(layer, ahead_col, piece, 2 if not highlight else 3)
+
+
+def _ahead_layer(hovered):
+    """Dashed lines of all non-hovered routes, cached until view or hover change."""
+    key = (_view_key(), hovered["name"] if hovered else None)
+    if _SCREEN_CACHE.get("ahead_key") != key:
+        layer = pygame.Surface((MAP_W, MAP_H), pygame.SRCALPHA)
+        for track in TRACKS:
+            if track is not hovered:
+                _draw_ahead(layer, track, False)
+        if hovered is not None:
+            layer.set_alpha(90)
+        _SCREEN_CACHE["ahead"], _SCREEN_CACHE["ahead_key"] = layer, key
+    return _SCREEN_CACHE["ahead"]
+
+
+def _draw_route(layer, track, day, highlight):
+    """Draw the travelled part of one route (ink casing, coloured core, chevrons)."""
+    col = track["color"]
+    w = ROUTE_W + (2 if highlight else 0)
+    if day < track["keyframes"][0][0]:
+        return None
+    done = _traveled_px(track, day)
+    if len(done) > 1:
+        _thick_line(layer, INK, done, w + 2 * CASING)            # ink casing
+        _thick_line(layer, col, done, w)                          # coloured core
+        _chevrons(layer, done, _mix(col, (255, 250, 236), 0.75))  # direction
+    return done[-1]
+
+
+def _draw_station(surf, p, fill, ring, r=5):
+    x, y = p
+    pygame.draw.circle(surf, ring, (x, y), r + 2)
+    pygame.draw.circle(surf, fill, (x, y), r)
+    pygame.draw.circle(surf, ring, (x, y), max(1, r - 3))      # seal centre
+
+
+def _draw_puck(surf, p, color, highlight):
+    """Current position: a wax-seal 'you are here' marker with a soft halo."""
+    x, y = int(p[0]), int(p[1])
+    halo = pygame.Surface((44, 44), pygame.SRCALPHA)
+    pygame.draw.circle(halo, (*color, 70 if highlight else 45), (22, 22), 20 if highlight else 16)
+    surf.blit(halo, (x - 22, y - 22))
+    r = 9 if highlight else 8
+    pygame.draw.circle(surf, INK, (x, y), r + 2)
+    pygame.draw.circle(surf, (250, 244, 228), (x, y), r)          # parchment rim
+    pygame.draw.circle(surf, color, (x, y), r - 2)
+    pygame.draw.circle(surf, _mix(color, (255, 255, 255), 0.6), (x - 2, y - 2), 2)
+
+
+def _draw_label(surf, p, text, placed):
+    """Small parchment tag with the station name (shown for the hovered route).
+    Tries above / below / right / left of the station and skips the label if all
+    spots overlap tags in `placed` or leave the map."""
+    global _LABEL_FONT
+    if _LABEL_FONT is None:
+        _LABEL_FONT = pygame.font.SysFont("Palatino,Georgia,serif", 14, bold=True)
+    img = _LABEL_FONT.render(text, True, INK)
+    box = img.get_rect()
+    box.inflate_ip(10, 4)
+    x, y = int(p[0]), int(p[1])
+    area = pygame.Rect(0, 0, MAP_W, MAP_H)
+    for attr, pos in (("midbottom", (x, y - 9)), ("midtop", (x, y + 9)),
+                      ("midleft", (x + 11, y)), ("midright", (x - 11, y))):
+        setattr(box, attr, pos)
+        if area.contains(box) and box.collidelist(placed) < 0:
+            break
+    else:
+        return
+    placed.append(box.copy())
+    pygame.draw.rect(surf, (250, 244, 228), box, border_radius=4)
+    pygame.draw.rect(surf, INK, box, 1, border_radius=4)
+    surf.blit(img, img.get_rect(center=box.center))
+
+
 def draw_waypoints(surf):
-    """Subtle dots for all journey stations (the map labels them itself)."""
-    for _, p in LOCATIONS.items():
-        x, y = world(p)
-        pygame.draw.circle(surf, (60, 48, 36), (x, y), 3)
+    """Places that are on no route (e.g. the Grey Havens): small ink dots."""
+    on_route = {loc for t in TRACKS for _, loc in t["keyframes"] if isinstance(loc, str)}
+    for name, p in LOCATIONS.items():
+        if name not in on_route:
+            pygame.draw.circle(surf, INK, world(p), 3)
 
 
 def draw_tracks(surf, day):
-    # Faintly hint at the full routes (smooth spline curves)
+    """All routes, their stations and current positions; the hovered route on top."""
+    global _LAYER
+    hovered = next((t for t in TRACKS if t["name"] == HOVER_TRACK), None)
+    surf.blit(_ahead_layer(hovered), (0, 0))
+    if hovered is None:
+        others = surf                              # nothing to dim: draw directly
+    else:
+        if _LAYER is None or _LAYER.get_size() != (MAP_W, MAP_H):
+            _LAYER = pygame.Surface((MAP_W, MAP_H), pygame.SRCALPHA)
+        others = _LAYER
+        others.fill((0, 0, 0, 0))
+        others.set_alpha(90)                       # everything else steps back
+    pucks = []
     for track in TRACKS:
-        full = [world(p) for p in full_spline(track)]
-        if len(full) > 1:
-            faint = tuple(int(c * 0.45 + 110 * 0.55) for c in track["color"])
-            pygame.draw.lines(surf, faint, False, full, 2)
-
-    # Travelled route + moving dot (no text label on the map)
-    for track in TRACKS:
-        if not track_active(track, day):
+        if track is hovered:
             continue
-        pts = [world(p) for p in traveled_spline(track, day)]
-        if len(pts) > 1:
-            pygame.draw.lines(surf, track["color"], False, pts, 4)
-        x, y = pts[-1]
-        pygame.draw.circle(surf, (12, 10, 14), (x, y), 9)
-        pygame.draw.circle(surf, track["color"], (x, y), 7)
-        pygame.draw.circle(surf, (255, 255, 255), (x, y), 3)
+        pos = _draw_route(others, track, day, False)
+        if pos is not None and track_active(track, day):
+            pucks.append((pos, track))
+    # Stations: one seal per place, filled in the colour of the group that got
+    # there last (hollow while nobody has reached it yet).
+    latest = {}
+    for track in TRACKS:
+        if track is hovered:
+            continue
+        for d, loc in _stations(track):
+            prev = latest.get(loc)
+            if prev is None or (d <= day and (prev[0] > day or d >= prev[0])):
+                latest[loc] = (d, track["color"])
+    for loc, (d, color) in latest.items():
+        _draw_station(others, world(LOCATIONS[loc]), color if d <= day else (250, 244, 228), INK)
+    for pos, track in pucks:
+        _draw_puck(others, pos, track["color"], False)
+    if others is not surf:
+        surf.blit(others, (0, 0))
+
+    if hovered is not None:
+        _draw_ahead(surf, hovered, True)
+        pos = _draw_route(surf, hovered, day, True)
+        first = {}                                  # first arrival per place
+        for d, loc in _stations(hovered):
+            first.setdefault(loc, d)
+        for loc, d in first.items():
+            p = world(LOCATIONS[loc])
+            _draw_station(surf, p, hovered["color"] if day >= d else (250, 244, 228), INK, 6)
+        placed = []
+        for loc in first:
+            _draw_label(surf, world(LOCATIONS[loc]), loc, placed)
+        if pos is not None and track_active(hovered, day):
+            _draw_puck(surf, pos, hovered["color"], True)
+
+
+def _seg_dist(p, a, b):
+    ax, ay, bx, by = a[0], a[1], b[0], b[1]
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    t = 0 if l2 == 0 else max(0, min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2))
+    return math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy))
+
+
+def update_hover(mouse, busy):
+    """Find the route under the mouse: a legend row, or a line on the map."""
+    global HOVER_TRACK
+    name = None
+    if not busy:
+        for rect, track_name in LEGEND_ROWS:
+            if rect.collidepoint(mouse):
+                name = track_name
+        if name is None and mouse[0] < MAP_W and mouse[1] < MAP_H:
+            best = 9.0                                       # hit radius in px
+            for track in TRACKS:
+                pts = _screen_routes()[track["name"]]
+                for a, b in zip(pts, pts[1:]):
+                    d = _seg_dist(mouse, a, b)
+                    if d < best:
+                        best, name = d, track["name"]
+    if name != HOVER_TRACK:
+        HOVER_TRACK = name
+        try:
+            pygame.mouse.set_system_cursor(pygame.SYSTEM_CURSOR_HAND if name
+                                           else pygame.SYSTEM_CURSOR_ARROW)
+        except (pygame.error, AttributeError):
+            pass
 
 
 DARK = (16, 14, 18)
@@ -454,8 +720,14 @@ def draw_panel(surf, fonts, minute, day, playing):
     # Legend: every group's colour + name (the names live here, not on the map)
     pygame.draw.line(surf, (70, 64, 60), (px + pad, y), (px + PANEL_W - pad, y), 1); y += 12
     surf.blit(fonts["panel_lbl"].render("LEGEND", True, HUD_DIM), (px + pad, y)); y += 24
+    LEGEND_ROWS.clear()
     for track in TRACKS:
         active = track_active(track, day)
+        row = pygame.Rect(px + 8, y - 3, PANEL_W - 16, 46)
+        LEGEND_ROWS.append((row, track["name"]))
+        if track["name"] == HOVER_TRACK:                  # hovered: highlight the row
+            pygame.draw.rect(surf, PANEL_BG2, row, border_radius=6)
+            pygame.draw.rect(surf, track["color"], row, 1, border_radius=6)
         col = track["color"] if active else (74, 70, 66)
         cx, cy = px + pad + 7, y + 8
         pygame.draw.circle(surf, (12, 10, 14), (cx, cy), 8)
@@ -764,6 +1036,7 @@ def main():
                     clamp_camera()
 
         keys = pygame.key.get_pressed()
+        update_hover(pygame.mouse.get_pos(), busy=drag is not None)
         if keys[pygame.K_LEFT]:
             minute = max(0, minute - speed / 60 * dt * 3); playing = False
         if keys[pygame.K_RIGHT]:
