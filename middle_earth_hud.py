@@ -22,10 +22,13 @@ Calibrate place positions:
     python3 middle_earth_hud.py --calibrate
 """
 
+import io
 import os
+import re
 import sys
 import json
 import math
+import time
 import pygame
 
 from data import LOCATIONS, TRACKS, EVENTS, MAX_DAY, FILMS, TOTAL_RUNTIME, FALLEN
@@ -33,6 +36,7 @@ from data import LOCATIONS, TRACKS, EVENTS, MAX_DAY, FILMS, TOTAL_RUNTIME, FALLE
 # --------------------------------------------------------------------------- Paths
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 BG_PATH = os.path.join(ASSET_DIR, "middle_earth_bg.png")
+SVG_PATH = os.path.join(ASSET_DIR, "middle_earth.svg")   # vector original, sharp when zoomed
 CALIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "locations.json")
 
 # --------------------------------------------------------------------------- Layout
@@ -315,11 +319,85 @@ def scale_background(raw):
     return pygame.transform.smoothscale(raw.convert(), (MAP_W, MAP_H))
 
 
-def draw_map_background(surf, bg):
+class SharpMap:
+    """Renders the visible map section straight from the SVG original, so the map
+    stays sharp at any zoom level (the PNG only has ~1000 px to stretch).
+
+    Rendering takes ~0.1 s, so it only happens once the view has stopped moving;
+    while zooming/panning the blurry PNG crop is shown as a quick preview."""
+
+    PARCHMENT = (244, 238, 222)        # background colour of the PNG version
+    SETTLE_S = 0.15                    # view must be still this long before re-rendering
+
+    def __init__(self, svg_bytes):
+        # Roads are drawn as zero-length dashes with round caps ("0,9"), which the
+        # SVG renderer drops - give the dots a tiny length so they show up.
+        svg_bytes = re.sub(rb'stroke-dasharray="0,([0-9.]+)"',
+                           lambda m: b'stroke-dasharray="0.01,' + m.group(1) + b'"', svg_bytes)
+        head_end = svg_bytes.index(b">", svg_bytes.index(b"<svg"))
+        self.head, self.body = svg_bytes[:head_end], svg_bytes[head_end:]
+        vb = re.search(rb'viewBox="([^"]*)"', self.head).group(1).replace(b",", b" ").split()
+        self.vb_x, self.vb_y, self.vb_w, self.vb_h = (float(v) for v in vb)
+        self.cache_key = None           # view the cached surface belongs to
+        self.cache = None
+        self.pending_key = None         # view we are waiting to settle
+        self.pending_since = 0.0
+
+    @classmethod
+    def load(cls):
+        if not os.path.exists(SVG_PATH):
+            return None
+        try:
+            with open(SVG_PATH, "rb") as f:
+                return cls(f.read())
+        except (OSError, ValueError, AttributeError) as exc:
+            print("Could not load map SVG, zoom stays blurry:", exc)
+            return None
+
+    def _render(self, bx, by, bw, bh):
+        """Render the base-pixel rectangle (bx, by, bw, bh) at map-area size."""
+        k = self.vb_w / MAP_W           # base pixels -> SVG units
+        view = b'viewBox="%.3f %.3f %.3f %.3f" width="%d" height="%d" preserveAspectRatio="none"' % (
+            self.vb_x + bx * k, self.vb_y + by * self.vb_h / MAP_H, bw * k, bh * self.vb_h / MAP_H,
+            MAP_W, MAP_H)
+        head = re.sub(rb'viewBox="[^"]*"', view, self.head)
+        img = pygame.image.load(io.BytesIO(head + self.body), "map.svg")
+        out = pygame.Surface((MAP_W, MAP_H)).convert()
+        out.fill(self.PARCHMENT)
+        out.blit(img, (0, 0))
+        return out
+
+    def get(self, bx, by, bw, bh):
+        """Sharp surface for this view, or None while the view is still moving."""
+        key = (round(bx, 2), round(by, 2), round(bw, 3), round(bh, 3))
+        if key == self.cache_key:
+            return self.cache
+        now = time.monotonic()
+        if key != self.pending_key:
+            self.pending_key, self.pending_since = key, now
+            return None
+        if now - self.pending_since < self.SETTLE_S:
+            return None
+        try:
+            self.cache = self._render(bx, by, bw, bh)
+        except (pygame.error, ValueError) as exc:
+            print("SVG render failed:", exc)
+            self.cache = None
+        self.cache_key = key
+        return self.cache
+
+
+def draw_map_background(surf, bg, sharp=None):
     """Blit the (zoomed) visible portion of the map into the map area."""
     if ZOOM <= 1.0001:
         surf.blit(bg, (0, 0))
         return
+    if sharp is not None:
+        bw, bh = MAP_W / ZOOM, MAP_H / ZOOM            # same view as world() uses
+        img = sharp.get(CAM_X - bw / 2, CAM_Y - bh / 2, bw, bh)
+        if img is not None:
+            surf.blit(img, (0, 0))
+            return
     sw, sh = MAP_W / ZOOM, MAP_H / ZOOM
     sx = int(min(max(CAM_X - sw / 2, 0), MAP_W - sw))
     sy = int(min(max(CAM_Y - sh / 2, 0), MAP_H - sh))
@@ -705,6 +783,8 @@ def main():
         run_calibration(screen, bg, fonts)
         return
 
+    sharp = SharpMap.load()                      # None -> zoom falls back to the PNG
+
     clock = pygame.time.Clock()
     minute = 0.0                 # current position in the trilogy runtime
     speed = 60.0                 # playback factor (film-seconds per real second)
@@ -775,7 +855,7 @@ def main():
                 minute = TOTAL_RUNTIME; playing = False
 
         day = minute_to_day(minute)
-        draw_map_background(screen, bg)
+        draw_map_background(screen, bg, sharp)
         screen.set_clip(pygame.Rect(0, 0, MAP_W, MAP_H))   # keep markers inside the map
         draw_waypoints(screen)
         draw_tracks(screen, day)
