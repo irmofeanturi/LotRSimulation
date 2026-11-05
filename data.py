@@ -96,13 +96,15 @@ def _along(d0, d1, points):
 
 
 # ---------------------------------------------------------------------------
-# Group routes. Each group has keyframes (day, place name).
+# Group routes. Each group has keyframes (day, place name) and an "icon"
+# (emblem on its seal: star, ring, sword, leaf or hat).
 # Positions are interpolated (spline) between two keyframes.
 # A group is only visible between its first and last day.
 # ---------------------------------------------------------------------------
 TRACKS = [
     {
         "name": "The Fellowship",
+        "icon": "star",               # emblem on the map seal and in the legend
         "color": (232, 198, 92),
         "members": "Frodo, Sam, Merry, Pippin, Aragorn, Legolas, Gimli, Boromir, Gandalf",
         # A keyframe target is a place name OR a raw (x, y) waypoint that bends the
@@ -130,6 +132,7 @@ TRACKS = [
     },
     {
         "name": "Frodo & Sam",
+        "icon": "ring",
         "color": (214, 74, 62),
         "members": "Frodo, Sam (and Gollum)",
         "keyframes": [
@@ -152,6 +155,7 @@ TRACKS = [
     },
     {
         "name": "Aragorn, Legolas & Gimli",
+        "icon": "sword",
         "color": (86, 150, 222),
         "members": "Aragorn, Legolas, Gimli",
         "keyframes": [
@@ -180,6 +184,7 @@ TRACKS = [
     },
     {
         "name": "Merry & Pippin",
+        "icon": "leaf",
         "color": (108, 190, 110),
         "members": "Merry, Pippin (split from day 165: Pippin -> Minas Tirith, Merry with Rohan)",
         "keyframes": [
@@ -199,6 +204,7 @@ TRACKS = [
     },
     {
         "name": "Gandalf the White",
+        "icon": "hat",
         "color": (236, 236, 246),
         "members": "Gandalf (returned after his fall in Moria)",
         "keyframes": [

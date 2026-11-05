@@ -71,7 +71,10 @@ the films.
 Routes are drawn like in a navigation app, but in ink on parchment: the part a
 group has already travelled is a solid line with an ink border and direction
 arrows, the road still ahead is a dashed quill line, and the current position is
-a small seal with a soft halo. Every station on a route is marked: filled in the
+the group's seal with its emblem: an Elven star for the Fellowship, the One Ring
+for Frodo & Sam, Anduril for Aragorn, Legolas & Gimli, a Lorien leaf brooch for
+Merry & Pippin and a wizard's hat for Gandalf (set via `"icon"` in `data.py`).
+Seals of groups at the same place are fanned out so none is hidden. Every station on a route is marked: filled in the
 group's colour once reached, hollow before. **Hover** a route on the map or its
 entry in the legend to highlight it (the other routes fade) and show the names
 of its stations.

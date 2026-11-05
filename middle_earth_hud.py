@@ -570,16 +570,92 @@ def _draw_station(surf, p, fill, ring, r=5, fade=False):
     _circle(surf, ring, p, max(1, r - 3))                      # seal centre
 
 
-def _draw_puck(surf, p, color, highlight, fade=False):
-    """Current position: a wax-seal 'you are here' marker with a soft halo."""
-    color = _fade(color, fade)
-    if not fade:
-        _circle(surf, (*color, 70 if highlight else 45), p, 20 if highlight else 16)
-    r = 9 if highlight else 8
-    _circle(surf, _fade(INK, fade), p, r + 2)
-    _circle(surf, (250, 244, 228), p, r)                       # parchment rim
-    _circle(surf, color, p, r - 2)
-    _circle(surf, _mix(color, (255, 255, 255), 0.6), (p[0] - 2, p[1] - 2), 2)
+# Group emblems drawn on the position seal and in the legend. Shapes use
+# normalised coordinates (-1..1, y down) around the seal centre.
+def _xf(pts, cx, cy, s, rot=0.0):
+    c, sn = math.cos(rot), math.sin(rot)
+    return [(cx + (x * c - y * sn) * s, cy + (x * sn + y * c) * s) for x, y in pts]
+
+
+def _icon_star(surf, cx, cy, s, fg, bg):
+    """Eight-pointed Elven star (as on the Doors of Durin): the Fellowship."""
+    pts = [((0.82 if i % 2 == 0 else 0.34) * math.sin(i * math.pi / 8),
+            -(0.82 if i % 2 == 0 else 0.34) * math.cos(i * math.pi / 8)) for i in range(16)]
+    pygame.draw.polygon(surf, fg, _xf(pts, cx, cy, s))
+    pygame.draw.circle(surf, bg, (cx, cy), 0.14 * s)
+
+
+def _icon_ring(surf, cx, cy, s, fg, bg):
+    """The One Ring: Frodo & Sam."""
+    pygame.draw.circle(surf, fg, (cx, cy), 0.66 * s)
+    pygame.draw.circle(surf, bg, (cx, cy), 0.40 * s)
+    pygame.draw.circle(surf, _mix(fg, (255, 255, 255), 0.55),     # glint
+                       (cx - 0.30 * s, cy - 0.40 * s), 0.10 * s)
+
+
+def _icon_sword(surf, cx, cy, s, fg, bg):
+    """Anduril, the sword that was broken: Aragorn, Legolas & Gimli."""
+    rot = math.radians(45)
+    blade = [(0, -0.92), (0.13, -0.70), (0.13, 0.30), (-0.13, 0.30), (-0.13, -0.70)]
+    guard = [(-0.48, 0.28), (0.48, 0.28), (0.48, 0.42), (-0.48, 0.42)]
+    grip = [(-0.08, 0.42), (0.08, 0.42), (0.08, 0.72), (-0.08, 0.72)]
+    for shape in (blade, guard, grip):
+        pygame.draw.polygon(surf, fg, _xf(shape, cx, cy, s, rot))
+    pygame.draw.circle(surf, fg, _xf([(0, 0.80)], cx, cy, s, rot)[0], 0.13 * s)
+
+
+def _icon_leaf(surf, cx, cy, s, fg, bg):
+    """Leaf brooch of Lorien (Pippin dropped his as a sign): Merry & Pippin."""
+    rot = math.radians(35)
+    n = 12
+    right = [(0.46 * math.sin(math.pi * i / n), -0.86 + 1.5 * i / n) for i in range(n + 1)]
+    left = [(-x, y) for x, y in reversed(right)]
+    pygame.draw.polygon(surf, fg, _xf(right + left, cx, cy, s, rot))
+    vein = _xf([(0, -0.62), (0, 0.84)], cx, cy, s, rot)            # midrib + stem
+    pygame.draw.line(surf, bg, vein[0], _xf([(0, 0.60)], cx, cy, s, rot)[0], max(1, int(0.10 * s)))
+    pygame.draw.line(surf, fg, _xf([(0, 0.60)], cx, cy, s, rot)[0], vein[1], max(1, int(0.12 * s)))
+
+
+def _icon_hat(surf, cx, cy, s, fg, bg):
+    """Pointed wizard's hat: Gandalf."""
+    cone = [(-0.40, 0.38), (0.36, 0.38), (0.20, -0.30), (0.38, -0.86), (-0.02, -0.40)]
+    pygame.draw.polygon(surf, fg, _xf(cone, cx, cy, s))
+    pygame.draw.ellipse(surf, fg, pygame.Rect(cx - 0.80 * s, cy + 0.28 * s, 1.60 * s, 0.34 * s))
+    pygame.draw.line(surf, bg, (cx - 0.34 * s, cy + 0.22 * s), (cx + 0.31 * s, cy + 0.22 * s),
+                     max(1, int(0.10 * s)))                          # hat band
+
+
+ICONS = {"star": _icon_star, "ring": _icon_ring, "sword": _icon_sword,
+         "leaf": _icon_leaf, "hat": _icon_hat}
+
+
+def _glyph_colour(color):
+    """Light glyph on dark seals, ink glyph on light ones."""
+    lum = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
+    return INK if lum > 170 else (250, 244, 228)
+
+
+def _seal(surf, cx, cy, r, color, icon, ring=INK):
+    """A seal: ink ring, disc in the group's colour, emblem on top (target px)."""
+    pygame.draw.circle(surf, ring, (cx, cy), r + max(2, r * 0.18))
+    pygame.draw.circle(surf, color, (cx, cy), r)
+    ICONS.get(icon, _icon_star)(surf, cx, cy, r * 0.82, _glyph_colour(color), color)
+
+
+def _draw_puck(surf, p, color, highlight, fade=False, icon="star"):
+    """Current position: the group's seal with its emblem (no halo, so the line
+    runs cleanly into the seal where the solid route turns into the dashed one)."""
+    r = (12 if highlight else 10) * SS
+    _seal(surf, p[0] * SS, p[1] * SS, r, _fade(color, fade), icon, _fade(INK, fade))
+
+
+def legend_seal(surf, center, color, icon, r=9):
+    """Small anti-aliased seal for the legend (drawn at SS x and scaled down)."""
+    size = int((r + 4) * 2)
+    big = pygame.Surface((size * SS, size * SS), pygame.SRCALPHA)
+    _seal(big, size * SS / 2, size * SS / 2, r * SS, color, icon)
+    small = pygame.transform.smoothscale(big, (size, size))
+    surf.blit(small, (center[0] - size // 2, center[1] - size // 2))
 
 
 def _draw_label(surf, p, text, placed):
@@ -615,6 +691,27 @@ def draw_waypoints(surf):
             pygame.draw.circle(surf, INK, world(p), 3)
 
 
+def _fan_out(pucks, near=14, radius=11):
+    """Groups at the same spot (e.g. all waiting in Minas Tirith) would hide each
+    other's seals: spread such clusters evenly around their centre."""
+    out, done = [], set()
+    for i, (p, t) in enumerate(pucks):
+        if i in done:
+            continue
+        group = [j for j, (q, _) in enumerate(pucks)
+                 if j not in done and math.dist(p, q) < near]
+        done.update(group)
+        if len(group) == 1:
+            out.append((p, t))
+            continue
+        cx = sum(pucks[j][0][0] for j in group) / len(group)
+        cy = sum(pucks[j][0][1] for j in group) / len(group)
+        for k, j in enumerate(group):
+            a = -math.pi / 2 + 2 * math.pi * k / len(group)
+            out.append(((cx + radius * math.cos(a), cy + radius * math.sin(a)), pucks[j][1]))
+    return out
+
+
 def draw_tracks(surf, day):
     """All routes, their stations and current positions; the hovered route on top
     (the others fade into the parchment). Everything is drawn on one SS x layer
@@ -643,8 +740,8 @@ def draw_tracks(surf, day):
     for loc, (d, color) in latest.items():
         _draw_station(big, world(LOCATIONS[loc]), color if d <= day else (250, 244, 228), INK,
                       fade=fade)
-    for pos, track in pucks:
-        _draw_puck(big, pos, track["color"], False, fade)
+    for pos, track in _fan_out(pucks):
+        _draw_puck(big, pos, track["color"], False, fade, track.get("icon", "star"))
 
     first = {}
     if hovered is not None:
@@ -655,7 +752,7 @@ def draw_tracks(surf, day):
             _draw_station(big, world(LOCATIONS[loc]),
                           hovered["color"] if day >= d else (250, 244, 228), INK, 6)
         if pos is not None and track_active(hovered, day):
-            _draw_puck(big, pos, hovered["color"], True)
+            _draw_puck(big, pos, hovered["color"], True, icon=hovered.get("icon", "star"))
     _blit_down(surf, big, _bbox(TRACKS))
     placed = []
     for loc in first:
@@ -755,9 +852,15 @@ def draw_fallen(surf, day):
     for f in FALLEN:
         if day >= f["day"]:
             x, y = world(LOCATIONS[f["location"]])
-            pygame.draw.circle(surf, (26, 24, 30), (x, y), 15)        # dark field (sable)
-            pygame.draw.circle(surf, (170, 175, 188), (x, y), 15, 2)  # silver rim
-            draw_symbol(surf, x, y, f["color"], f.get("symbol", "horn"), scale=1.1)
+            r = 12                                                     # drawn at SS x, scaled down
+            size = (r + 4) * 2
+            big = pygame.Surface((size * SS, size * SS), pygame.SRCALPHA)
+            c = (size * SS // 2, size * SS // 2)
+            pygame.draw.circle(big, INK, c, (r + 2) * SS)                      # ink ring
+            pygame.draw.circle(big, (26, 24, 30), c, r * SS)                   # dark field (sable)
+            pygame.draw.circle(big, (170, 175, 188), c, (r - 1) * SS, SS)      # silver rim
+            draw_symbol(big, c[0], c[1], f["color"], f.get("symbol", "horn"), scale=0.85 * SS)
+            surf.blit(pygame.transform.smoothscale(big, (size, size)), (x - size // 2, y - size // 2))
 
 
 # --------------------------------------------------------------------------- HUD panel
@@ -801,11 +904,7 @@ def draw_panel(surf, fonts, minute, day, playing):
             pygame.draw.rect(surf, PANEL_BG2, row, border_radius=6)
             pygame.draw.rect(surf, track["color"], row, 1, border_radius=6)
         col = track["color"] if active else (74, 70, 66)
-        cx, cy = px + pad + 7, y + 8
-        pygame.draw.circle(surf, (12, 10, 14), (cx, cy), 8)
-        pygame.draw.circle(surf, col, (cx, cy), 6)
-        if active:
-            pygame.draw.circle(surf, (255, 255, 255), (cx, cy), 2)
+        legend_seal(surf, (px + pad + 7, y + 9), col, track.get("icon", "star"))
         name_col = HUD_TEXT if active else (104, 98, 92)
         surf.blit(fonts["panel_med"].render(track["name"], True, name_col), (px + pad + 22, y)); y += 23
         if active:
