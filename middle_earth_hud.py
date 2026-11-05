@@ -803,59 +803,92 @@ def _capsule(surf, color, a, b, r, k):
     pygame.draw.circle(surf, color, (bx, by), r * k)
 
 
-def _rrect(surf, color, x, y, w, h, rad, k):
-    pygame.draw.rect(surf, color, pygame.Rect(x * k, y * k, w * k, h * k),
-                     border_radius=int(rad * k))
+def _rrect_pts(x, y, w, h, r, steps=5):
+    """Outline points of a rounded rectangle (grid units)."""
+    pts = []
+    for cx, cy, a0 in ((x + w - r, y + r, -90), (x + w - r, y + h - r, 0),
+                       (x + r, y + h - r, 90), (x + r, y + r, 180)):
+        for i in range(steps + 1):
+            a = math.radians(a0 + 90 * i / steps)
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
 
 
 def _gauntlet(closed):
-    """Surface of the open gauntlet or the closed fist."""
-    k = 4
+    """Cursor surface + hotspot. Open: a pointing gauntlet seen from the back,
+    index finger stretched diagonally up-left like an arrow pointer, thumb out to
+    the left, the other fingers curled. Closed: a fist from the back (the thumb
+    is hidden in front), grabbing the map."""
+    k = 4                                                   # drawn at 4x, scaled down
     surf = pygame.Surface((CURSOR_PX * k, CURSOR_PX * k), pygame.SRCALPHA)
     if closed:
-        fingers = [((10.6, 12.6), (10.6, 15.0)), ((14.4, 11.8), (14.4, 15.0)),
-                   ((18.2, 11.8), (18.2, 15.0)), ((21.8, 12.8), (21.8, 15.2))]
-        palm = (8.4, 12.8, 15.4, 12.4)
-        thumb = ((9.2, 19.6), (17.0, 17.4))
+        rot, shift = math.radians(-12), (0.0, -1.6)
     else:
-        fingers = [((10.6, 15.0), (10.0, 5.2)), ((14.4, 15.0), (14.2, 3.0)),
-                   ((18.2, 15.0), (18.6, 3.8)), ((21.8, 15.4), (23.0, 7.0))]
-        palm = (8.4, 13.6, 15.4, 11.6)
-        thumb = ((9.6, 21.0), (4.2, 13.4))
-    cuff = (7.6, 24.2, 17.0, 6.6)
-    fr, tr = 1.75, 1.85                                   # finger / thumb radius
-    o = 1.1                                               # outline width (units)
-    # 1) ink silhouette, slightly larger
-    for a, b in fingers:
-        _capsule(surf, CURSOR_INK, a, b, fr + o, k)
-    _capsule(surf, CURSOR_INK, *thumb, tr + o, k)
-    _rrect(surf, CURSOR_INK, palm[0] - o, palm[1] - o, palm[2] + 2 * o, palm[3] + 2 * o, 3.4, k)
-    _rrect(surf, CURSOR_INK, cuff[0] - o, cuff[1] - o, cuff[2] + 2 * o, cuff[3] + 2 * o, 2.4, k)
+        rot, shift = math.radians(-30), (-3.0, -2.0)
+    c, sn = math.cos(rot), math.sin(rot)
+
+    def T(p):                                               # rotate around the centre + shift
+        x, y = p[0] - 16, p[1] - 16
+        return (16 + x * c - y * sn + shift[0], 16 + x * sn + y * c + shift[1])
+
+    def caps(color, a, b, r):
+        _capsule(surf, color, T(a), T(b), r, k)
+
+    def poly(color, pts):
+        pygame.draw.polygon(surf, color, [(x * k, y * k) for x, y in map(T, pts)])
+
+    o = 1.0                                                 # ink outline (units)
+    hand = (10.5, 13.0, 12.5, 11.0, 3.4)                   # back of the hand
+    cuff = (10.0, 23.2, 13.5, 6.8, 1.8)
+    if closed:
+        hand = (9.0, 13.0, 14.5, 11.0, 3.4)
+        cuff = (9.4, 23.2, 13.8, 6.8, 1.8)
+        index = None
+        thumb = None
+        curled = [((10.9, 11.4), (10.9, 14.5), 1.85), ((14.5, 10.9), (14.5, 14.5), 1.9),
+                  ((18.1, 10.9), (18.1, 14.5), 1.9), ((21.6, 11.6), (21.6, 14.8), 1.75)]
+    else:
+        index = ((13.0, 15.0), (13.0, 3.2), 1.95)
+        thumb = ((12.0, 20.5), (5.6, 15.4), 1.95)
+        curled = [((17.2, 13.6), (17.2, 16.8), 1.85), ((20.3, 14.0), (20.3, 17.2), 1.8),
+                  ((22.9, 15.2), (22.7, 18.2), 1.6)]
+    fingers = ([index] if index else []) + ([thumb] if thumb else []) + curled
+
+    # 1) ink silhouette, one outline width larger
+    for a, b, r in fingers:
+        caps(CURSOR_INK, a, b, r + o)
+    poly(CURSOR_INK, _rrect_pts(hand[0] - o, hand[1] - o, hand[2] + 2 * o, hand[3] + 2 * o, hand[4] + o))
+    poly(CURSOR_INK, _rrect_pts(cuff[0] - o, cuff[1] - o, cuff[2] + 2 * o, cuff[3] + 2 * o, cuff[4] + o))
     # 2) steel plates
-    _rrect(surf, STEEL_DK, *cuff, 1.8, k)                          # cuff (darker steel)
-    _rrect(surf, STEEL, *palm, 3.0, k)
-    for a, b in fingers:
-        _capsule(surf, STEEL, a, b, fr, k)
-    _capsule(surf, STEEL, *thumb, tr, k)
-    # 3) details: finger joints (plate edges), highlights, cuff rivets
-    for a, b in fingers:
-        for t in ((0.38, 0.70) if not closed else (0.5,)):
+    poly(STEEL_DK, _rrect_pts(*cuff))
+    poly(STEEL, _rrect_pts(*hand))
+    for a, b, r in fingers:
+        caps(STEEL, a, b, r)
+    # 3) plate edges (joints), knuckle line, highlights, cuff rivets
+    for a, b, r in fingers:
+        ts = (0.36, 0.68) if (a, b, r) == index else (0.55,)
+        for t in ts:
             px, py = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
-            _capsule(surf, CURSOR_INK, (px - fr * 0.85, py), (px + fr * 0.85, py), 0.32, k)
-        hi_a = (a[0] - 0.6, a[1] + (b[1] - a[1]) * 0.15)
-        hi_b = (b[0] - 0.6, b[1] - (b[1] - a[1]) * 0.08)
-        _capsule(surf, STEEL_HI, hi_a, hi_b, 0.45, k)
-    _rrect(surf, STEEL_HI, palm[0] + 1.4, palm[1] + 1.4, palm[2] - 2.8, 1.3, 0.6, k)
-    if closed:                                  # thumb folded across the curled fingers
-        _capsule(surf, CURSOR_INK, *thumb, tr + 0.7, k)
-        _capsule(surf, STEEL, *thumb, tr, k)
-        _capsule(surf, STEEL_HI, (thumb[0][0] + 0.6, thumb[0][1] - 0.9),
-                 (thumb[1][0] - 0.4, thumb[1][1] - 0.9), 0.4, k)
-    _capsule(surf, CURSOR_INK, (cuff[0] + 0.6, cuff[1] + 0.2),
-             (cuff[0] + cuff[2] - 0.6, cuff[1] + 0.2), 0.5, k)       # cuff edge
-    for x in (cuff[0] + 3.2, cuff[0] + cuff[2] / 2, cuff[0] + cuff[2] - 3.2):
-        pygame.draw.circle(surf, STEEL_HI, (x * k, (cuff[1] + 3.6) * k), 0.8 * k)
-    return pygame.transform.smoothscale(surf, (CURSOR_PX, CURSOR_PX))
+            ln = math.hypot(b[0] - a[0], b[1] - a[1]) or 1
+            nx, ny = -(b[1] - a[1]) / ln * r * 0.85, (b[0] - a[0]) / ln * r * 0.85
+            caps(CURSOR_INK, (px + nx, py + ny), (px - nx, py - ny), 0.3)
+        caps(STEEL_HI, (a[0] - r * 0.35, a[1] + (b[1] - a[1]) * 0.12),
+             (b[0] - r * 0.35, b[1] - (b[1] - a[1]) * 0.12), 0.42)
+    kx0, kx1 = hand[0] + 1.2, hand[0] + hand[2] - 1.2
+    caps(CURSOR_INK, (kx0, hand[1] + 3.6), (kx1, hand[1] + 3.6), 0.3)       # knuckle plate edge
+    caps(STEEL_HI, (kx0 + 0.6, hand[1] + 5.4), (kx1 - 1.2, hand[1] + 5.4), 0.55)
+    caps(CURSOR_INK, (cuff[0] + 0.6, cuff[1] + 0.2), (cuff[0] + cuff[2] - 0.6, cuff[1] + 0.2), 0.45)
+    for x in (cuff[0] + 3.0, cuff[0] + cuff[2] / 2, cuff[0] + cuff[2] - 3.0):
+        cx, cy = T((x, cuff[1] + 3.8))
+        pygame.draw.circle(surf, STEEL_HI, (cx * k, cy * k), 0.8 * k)
+
+    img = pygame.transform.smoothscale(surf, (CURSOR_PX, CURSOR_PX))
+    if index:                                               # click point = fingertip
+        tip = T((index[1][0], index[1][1] - index[2] + 0.4))
+        hot = (max(0, int(round(tip[0]))), max(0, int(round(tip[1]))))
+    else:
+        hot = (16, 16)
+    return img, hot
 
 
 def set_cursor(state):
@@ -867,7 +900,8 @@ def set_cursor(state):
     try:
         if state in ("open", "grab"):
             if state not in _CURSORS:
-                _CURSORS[state] = pygame.cursors.Cursor((16, 15), _gauntlet(state == "grab"))
+                img, hot = _gauntlet(state == "grab")
+                _CURSORS[state] = pygame.cursors.Cursor(hot, img)
             pygame.mouse.set_cursor(_CURSORS[state])
         else:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND if state == "point"
