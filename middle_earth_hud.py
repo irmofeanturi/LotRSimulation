@@ -696,6 +696,7 @@ def _draw_label(surf, p, text, placed):
 def draw_waypoints(surf):
     """Places that are on no route (e.g. the Grey Havens): small ink dots."""
     on_route = {loc for t in TRACKS for _, loc in t["keyframes"] if isinstance(loc, str)}
+    on_route |= {f["location"] for f in FALLEN}      # those get a memorial instead
     for name, p in LOCATIONS.items():
         if name not in on_route:
             pygame.draw.circle(surf, INK, world(p), 3)
@@ -777,15 +778,116 @@ def _seg_dist(p, a, b):
     return math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy))
 
 
-def update_hover(mouse, busy):
-    """Find the route under the mouse: a legend row, or a line on the map."""
+# --------------------------------------------------------------------------- Mouse cursor
+# Over the map the pointer is an armoured gauntlet: open while hovering, a
+# closed fist that "grabs" the map while you drag it. Drawn in a 32-unit grid
+# at 4x and scaled down, so the edges stay smooth.
+STEEL = (178, 184, 196)
+STEEL_HI = (226, 230, 238)
+STEEL_DK = (112, 118, 132)
+CURSOR_INK = (24, 22, 28)
+CURSOR_PX = 32
+_CURSORS = {}
+_CURSOR_STATE = None
+
+
+def _capsule(surf, color, a, b, r, k):
+    """Thick segment a->b with round ends (grid units, k px per unit)."""
+    ax, ay, bx, by = a[0] * k, a[1] * k, b[0] * k, b[1] * k
+    dx, dy = bx - ax, by - ay
+    ln = math.hypot(dx, dy) or 1
+    nx, ny = -dy / ln * r * k, dx / ln * r * k
+    pygame.draw.polygon(surf, color, ((ax + nx, ay + ny), (bx + nx, by + ny),
+                                      (bx - nx, by - ny), (ax - nx, ay - ny)))
+    pygame.draw.circle(surf, color, (ax, ay), r * k)
+    pygame.draw.circle(surf, color, (bx, by), r * k)
+
+
+def _rrect(surf, color, x, y, w, h, rad, k):
+    pygame.draw.rect(surf, color, pygame.Rect(x * k, y * k, w * k, h * k),
+                     border_radius=int(rad * k))
+
+
+def _gauntlet(closed):
+    """Surface of the open gauntlet or the closed fist."""
+    k = 4
+    surf = pygame.Surface((CURSOR_PX * k, CURSOR_PX * k), pygame.SRCALPHA)
+    if closed:
+        fingers = [((10.6, 12.6), (10.6, 15.0)), ((14.4, 11.8), (14.4, 15.0)),
+                   ((18.2, 11.8), (18.2, 15.0)), ((21.8, 12.8), (21.8, 15.2))]
+        palm = (8.4, 12.8, 15.4, 12.4)
+        thumb = ((9.2, 19.6), (17.0, 17.4))
+    else:
+        fingers = [((10.6, 15.0), (10.0, 5.2)), ((14.4, 15.0), (14.2, 3.0)),
+                   ((18.2, 15.0), (18.6, 3.8)), ((21.8, 15.4), (23.0, 7.0))]
+        palm = (8.4, 13.6, 15.4, 11.6)
+        thumb = ((9.6, 21.0), (4.2, 13.4))
+    cuff = (7.6, 24.2, 17.0, 6.6)
+    fr, tr = 1.75, 1.85                                   # finger / thumb radius
+    o = 1.1                                               # outline width (units)
+    # 1) ink silhouette, slightly larger
+    for a, b in fingers:
+        _capsule(surf, CURSOR_INK, a, b, fr + o, k)
+    _capsule(surf, CURSOR_INK, *thumb, tr + o, k)
+    _rrect(surf, CURSOR_INK, palm[0] - o, palm[1] - o, palm[2] + 2 * o, palm[3] + 2 * o, 3.4, k)
+    _rrect(surf, CURSOR_INK, cuff[0] - o, cuff[1] - o, cuff[2] + 2 * o, cuff[3] + 2 * o, 2.4, k)
+    # 2) steel plates
+    _rrect(surf, STEEL_DK, *cuff, 1.8, k)                          # cuff (darker steel)
+    _rrect(surf, STEEL, *palm, 3.0, k)
+    for a, b in fingers:
+        _capsule(surf, STEEL, a, b, fr, k)
+    _capsule(surf, STEEL, *thumb, tr, k)
+    # 3) details: finger joints (plate edges), highlights, cuff rivets
+    for a, b in fingers:
+        for t in ((0.38, 0.70) if not closed else (0.5,)):
+            px, py = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+            _capsule(surf, CURSOR_INK, (px - fr * 0.85, py), (px + fr * 0.85, py), 0.32, k)
+        hi_a = (a[0] - 0.6, a[1] + (b[1] - a[1]) * 0.15)
+        hi_b = (b[0] - 0.6, b[1] - (b[1] - a[1]) * 0.08)
+        _capsule(surf, STEEL_HI, hi_a, hi_b, 0.45, k)
+    _rrect(surf, STEEL_HI, palm[0] + 1.4, palm[1] + 1.4, palm[2] - 2.8, 1.3, 0.6, k)
+    if closed:                                  # thumb folded across the curled fingers
+        _capsule(surf, CURSOR_INK, *thumb, tr + 0.7, k)
+        _capsule(surf, STEEL, *thumb, tr, k)
+        _capsule(surf, STEEL_HI, (thumb[0][0] + 0.6, thumb[0][1] - 0.9),
+                 (thumb[1][0] - 0.4, thumb[1][1] - 0.9), 0.4, k)
+    _capsule(surf, CURSOR_INK, (cuff[0] + 0.6, cuff[1] + 0.2),
+             (cuff[0] + cuff[2] - 0.6, cuff[1] + 0.2), 0.5, k)       # cuff edge
+    for x in (cuff[0] + 3.2, cuff[0] + cuff[2] / 2, cuff[0] + cuff[2] - 3.2):
+        pygame.draw.circle(surf, STEEL_HI, (x * k, (cuff[1] + 3.6) * k), 0.8 * k)
+    return pygame.transform.smoothscale(surf, (CURSOR_PX, CURSOR_PX))
+
+
+def set_cursor(state):
+    """state: 'arrow', 'point' (legend), 'open' (over the map) or 'grab' (dragging)."""
+    global _CURSOR_STATE
+    if state == _CURSOR_STATE:
+        return
+    _CURSOR_STATE = state
+    try:
+        if state in ("open", "grab"):
+            if state not in _CURSORS:
+                _CURSORS[state] = pygame.cursors.Cursor((16, 15), _gauntlet(state == "grab"))
+            pygame.mouse.set_cursor(_CURSORS[state])
+        else:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND if state == "point"
+                                    else pygame.SYSTEM_CURSOR_ARROW)
+    except (pygame.error, AttributeError, TypeError):
+        pass                                   # no custom cursors here: keep the default
+
+
+def update_hover(mouse, drag=None):
+    """Find the route under the mouse (a legend row, or a line on the map) and
+    pick the mouse cursor: gauntlet over the map, a closed fist while panning."""
     global HOVER_TRACK
     name = None
-    if not busy:
+    on_legend = False
+    on_map = mouse[0] < MAP_W and mouse[1] < MAP_H
+    if drag is None:
         for rect, track_name in LEGEND_ROWS:
             if rect.collidepoint(mouse):
-                name = track_name
-        if name is None and mouse[0] < MAP_W and mouse[1] < MAP_H:
+                name, on_legend = track_name, True
+        if name is None and on_map:
             best = 9.0                                       # hit radius in px
             for track in TRACKS:
                 pts = _screen_routes()[track["name"]]
@@ -793,13 +895,15 @@ def update_hover(mouse, busy):
                     d = _seg_dist(mouse, a, b)
                     if d < best:
                         best, name = d, track["name"]
-    if name != HOVER_TRACK:
-        HOVER_TRACK = name
-        try:
-            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND if name
-                                    else pygame.SYSTEM_CURSOR_ARROW)
-        except (pygame.error, AttributeError):
-            pass
+    HOVER_TRACK = name
+    if drag == "pan":
+        set_cursor("grab")
+    elif drag is None and on_map:
+        set_cursor("open")
+    elif on_legend:
+        set_cursor("point")
+    else:
+        set_cursor("arrow")
 
 
 DARK = (16, 14, 18)
@@ -848,8 +952,13 @@ def draw_horn(surf, cx, cy, color, scale=1.0):
                          max(1, int(1.2 * scale)))
 
 
+def draw_grey_hat(surf, cx, cy, color, scale=1.0):
+    """Gandalf the Grey's pointed hat (same emblem as on Gandalf's route seal)."""
+    _icon_hat(surf, cx, cy, 10.5 * scale, color, (26, 24, 30))
+
+
 # Symbols a fallen character can be marked with.
-SYMBOLS = {"horn": draw_horn}
+SYMBOLS = {"horn": draw_horn, "hat": draw_grey_hat}
 
 
 def draw_symbol(surf, cx, cy, color, kind, scale=1.0):
@@ -941,7 +1050,7 @@ def draw_panel(surf, fonts, minute, day, playing):
         else:
             pygame.draw.circle(surf, (74, 70, 66), (cx, cy), 5)
             name = f["name"]
-            note = "with the Fellowship"
+            note = f.get("with", "with the Fellowship")
             name_col, note_col = (104, 98, 92), (90, 86, 82)
         surf.blit(fonts["panel_med"].render(name, True, name_col), (px + pad + 22, y)); y += 23
         surf.blit(fonts["panel_sm"].render(note, True, note_col), (px + pad + 22, y)); y += 22
@@ -1218,7 +1327,7 @@ def main():
                     clamp_camera()
 
         keys = pygame.key.get_pressed()
-        update_hover(pygame.mouse.get_pos(), busy=drag is not None)
+        update_hover(pygame.mouse.get_pos(), drag)
         if keys[pygame.K_LEFT]:
             minute = max(0, minute - speed / 60 * dt * 3); playing = False
         if keys[pygame.K_RIGHT]:

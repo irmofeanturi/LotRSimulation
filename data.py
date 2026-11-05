@@ -43,6 +43,7 @@ LOCATIONS = {
     "Pelargir":         (0.628, 0.786),
     "Minas Tirith":     (0.639, 0.699),
     "Cormallen":        (0.650, 0.664),       # Field of Cormallen, Ithilien
+    "Khazad-dum":       (0.483, 0.386),       # the Bridge, near the East-gate of Moria
 }
 
 # ---------------------------------------------------------------------------
@@ -288,9 +289,18 @@ TRACKS = [
 # Characters who fall during the journey. They have no onward route, so instead
 # of a moving dot they get a memorial marker (chosen via "symbol", e.g. a horn)
 # at the place where they fall, shown from that day on, plus a legend entry.
-# Available symbols: "horn".
+# Available symbols: "horn", "hat".
 # ---------------------------------------------------------------------------
 FALLEN = [
+    {
+        "name": "Gandalf the Grey",
+        "symbol": "hat",                   # the grey wizard's hat
+        "color": (176, 176, 184),          # grey (shown on a dark medallion)
+        "location": "Khazad-dum",
+        "day": 114,                        # 15 Jan: falls with the Balrog
+        "note": "fell with the Balrog - returns as the White",
+        "with": "with the Fellowship",
+    },
     {
         "name": "Boromir",
         "symbol": "horn",                  # the Horn of Gondor
@@ -298,6 +308,7 @@ FALLEN = [
         "location": "Amon Hen",
         "day": 156,                        # falls at the breaking of the Fellowship
         "note": "fell defending Merry & Pippin",
+        "with": "with the Fellowship",
     },
 ]
 

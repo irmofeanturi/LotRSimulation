@@ -26,7 +26,7 @@ python3 middle_earth_hud.py
 | drag the speed slider   | set the speed (bottom-right, top)            |
 | drag the zoom slider    | zoom the map 1× … 100× (bottom-right, lower) |
 | mouse wheel on the map  | zoom in/out toward the cursor                |
-| drag on the map         | pan when zoomed in                           |
+| drag on the map         | pan when zoomed in (the gauntlet cursor closes into a fist and grabs the map) |
 | `0`                     | reset zoom to 1×                             |
 | click/drag the timeline | jump to any moment (bottom-left)             |
 | `R`                     | reset to the start                           |
