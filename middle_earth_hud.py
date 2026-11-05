@@ -820,7 +820,7 @@ def _gauntlet(closed):
     index finger stretched diagonally up-left like an arrow pointer, thumb out to
     the left, the other fingers curled. Closed: a fist from the back (the thumb
     is hidden in front), grabbing the map."""
-    k = 4                                                   # drawn at 4x, scaled down
+    k = 8                                                   # drawn at 8x, scaled down
     surf = pygame.Surface((CURSOR_PX * k, CURSOR_PX * k), pygame.SRCALPHA)
     if closed:
         rot, shift = math.radians(-12), (0.0, -1.6)
@@ -838,14 +838,14 @@ def _gauntlet(closed):
     def poly(color, pts):
         pygame.draw.polygon(surf, color, [(x * k, y * k) for x, y in map(T, pts)])
 
-    o = 1.0                                                 # ink outline (units)
+    o = 0.85                                                # ink outline (units)
     hand = (10.5, 13.0, 12.5, 11.0, 3.4)                   # back of the hand
     cuff = (10.0, 23.2, 13.5, 6.8, 1.8)
     if closed:
         hand = (9.0, 13.0, 14.5, 11.0, 3.4)
         cuff = (9.4, 23.2, 13.8, 6.8, 1.8)
         index = None
-        thumb = None
+        thumb = ((10.0, 21.6), (7.9, 16.2), 1.7)           # side of the thumb, left of the fist
         curled = [((10.9, 11.4), (10.9, 14.5), 1.85), ((14.5, 10.9), (14.5, 14.5), 1.9),
                   ((18.1, 10.9), (18.1, 14.5), 1.9), ((21.6, 11.6), (21.6, 14.8), 1.75)]
     else:
@@ -856,7 +856,7 @@ def _gauntlet(closed):
     fingers = ([index] if index else []) + ([thumb] if thumb else []) + curled
 
     # 0) thin light rim so the dark gauntlet stays visible on dark map areas
-    rim = o + 0.7
+    rim = o + 0.45
     for a, b, r in fingers:
         caps(CURSOR_RIM, a, b, r + rim)
     poly(CURSOR_RIM, _rrect_pts(hand[0] - rim, hand[1] - rim, hand[2] + 2 * rim, hand[3] + 2 * rim, hand[4] + rim))
@@ -866,10 +866,16 @@ def _gauntlet(closed):
         caps(CURSOR_INK, a, b, r + o)
     poly(CURSOR_INK, _rrect_pts(hand[0] - o, hand[1] - o, hand[2] + 2 * o, hand[3] + 2 * o, hand[4] + o))
     poly(CURSOR_INK, _rrect_pts(cuff[0] - o, cuff[1] - o, cuff[2] + 2 * o, cuff[3] + 2 * o, cuff[4] + o))
-    # 2) steel plates
+    # 2) steel plates (the fist's thumb sits behind the hand, only its side shows)
     poly(STEEL_DK, _rrect_pts(*cuff))
+    if closed:
+        caps(STEEL, *thumb[:2], thumb[2])
     poly(STEEL, _rrect_pts(*hand))
+    if closed:                                              # edge where thumb meets hand
+        caps(CURSOR_INK, (hand[0] + 0.15, hand[1] + 6.5), (hand[0] + 0.15, hand[1] + 10.6), 0.32)
     for a, b, r in fingers:
+        if closed and (a, b, r) == thumb:
+            continue
         caps(STEEL, a, b, r)
     # 3) plate edges (joints), knuckle line, highlights, cuff rivets
     for a, b, r in fingers:
@@ -899,22 +905,34 @@ def _gauntlet(closed):
 
 
 def set_cursor(state):
-    """state: 'arrow', 'point' (legend), 'open' (over the map) or 'grab' (dragging)."""
+    """state: 'arrow', 'point' (legend), 'open' (over the map) or 'grab' (dragging).
+    The gauntlet is drawn by draw_cursor() into the frame instead of being a
+    system cursor: macOS shows custom SDL cursors at half resolution on Retina
+    screens (they look pixelated), the frame itself is scaled smoothly."""
     global _CURSOR_STATE
     if state == _CURSOR_STATE:
         return
     _CURSOR_STATE = state
     try:
         if state in ("open", "grab"):
-            if state not in _CURSORS:
-                img, hot = _gauntlet(state == "grab")
-                _CURSORS[state] = pygame.cursors.Cursor(hot, img)
-            pygame.mouse.set_cursor(_CURSORS[state])
+            pygame.mouse.set_visible(False)
         else:
+            pygame.mouse.set_visible(True)
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND if state == "point"
                                     else pygame.SYSTEM_CURSOR_ARROW)
     except (pygame.error, AttributeError, TypeError):
-        pass                                   # no custom cursors here: keep the default
+        pass
+
+
+def draw_cursor(surf):
+    """Draw the gauntlet at the mouse position (call last, right before flip)."""
+    if _CURSOR_STATE not in ("open", "grab") or not pygame.mouse.get_focused():
+        return
+    if _CURSOR_STATE not in _CURSORS:
+        _CURSORS[_CURSOR_STATE] = _gauntlet(_CURSOR_STATE == "grab")
+    img, hot = _CURSORS[_CURSOR_STATE]
+    mx, my = pygame.mouse.get_pos()
+    surf.blit(img, (mx - hot[0], my - hot[1]))
 
 
 def update_hover(mouse, drag=None):
@@ -1388,6 +1406,7 @@ def main():
         screen.set_clip(None)
         draw_panel(screen, fonts, minute, day, playing)
         draw_bottom_bar(screen, fonts, minute, speed, ZOOM, playing)
+        draw_cursor(screen)
         pygame.display.flip()
 
 
