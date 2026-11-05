@@ -617,8 +617,8 @@ def update_hover(mouse, busy):
     if name != HOVER_TRACK:
         HOVER_TRACK = name
         try:
-            pygame.mouse.set_system_cursor(pygame.SYSTEM_CURSOR_HAND if name
-                                           else pygame.SYSTEM_CURSOR_ARROW)
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND if name
+                                    else pygame.SYSTEM_CURSOR_ARROW)
         except (pygame.error, AttributeError):
             pass
 
