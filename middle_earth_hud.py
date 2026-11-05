@@ -782,10 +782,11 @@ def _seg_dist(p, a, b):
 # Over the map the pointer is an armoured gauntlet: open while hovering, a
 # closed fist that "grabs" the map while you drag it. Drawn in a 32-unit grid
 # at 4x and scaled down, so the edges stay smooth.
-STEEL = (178, 184, 196)
-STEEL_HI = (226, 230, 238)
-STEEL_DK = (112, 118, 132)
-CURSOR_INK = (24, 22, 28)
+STEEL = (104, 92, 82)               # dark, greyish-brown blackened iron
+STEEL_HI = (150, 138, 124)          # worn edges catching the light
+STEEL_DK = (70, 61, 54)             # cuff
+CURSOR_INK = (20, 16, 14)
+CURSOR_RIM = (236, 226, 204)      # light parchment rim around the silhouette
 CURSOR_PX = 32
 _CURSORS = {}
 _CURSOR_STATE = None
@@ -824,7 +825,7 @@ def _gauntlet(closed):
     if closed:
         rot, shift = math.radians(-12), (0.0, -1.6)
     else:
-        rot, shift = math.radians(-30), (-3.0, -2.0)
+        rot, shift = math.radians(-30), (-1.6, -1.2)
     c, sn = math.cos(rot), math.sin(rot)
 
     def T(p):                                               # rotate around the centre + shift
@@ -854,6 +855,12 @@ def _gauntlet(closed):
                   ((22.9, 15.2), (22.7, 18.2), 1.6)]
     fingers = ([index] if index else []) + ([thumb] if thumb else []) + curled
 
+    # 0) thin light rim so the dark gauntlet stays visible on dark map areas
+    rim = o + 0.7
+    for a, b, r in fingers:
+        caps(CURSOR_RIM, a, b, r + rim)
+    poly(CURSOR_RIM, _rrect_pts(hand[0] - rim, hand[1] - rim, hand[2] + 2 * rim, hand[3] + 2 * rim, hand[4] + rim))
+    poly(CURSOR_RIM, _rrect_pts(cuff[0] - rim, cuff[1] - rim, cuff[2] + 2 * rim, cuff[3] + 2 * rim, cuff[4] + rim))
     # 1) ink silhouette, one outline width larger
     for a, b, r in fingers:
         caps(CURSOR_INK, a, b, r + o)
