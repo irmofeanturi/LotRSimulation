@@ -22,10 +22,14 @@ Calibrate place positions:
     python3 middle_earth_hud.py --calibrate
 """
 
+import io
 import os
+import re
 import sys
 import json
 import math
+import time
+import threading
 import pygame
 
 from data import LOCATIONS, TRACKS, EVENTS, MAX_DAY, FILMS, TOTAL_RUNTIME, FALLEN
@@ -33,6 +37,7 @@ from data import LOCATIONS, TRACKS, EVENTS, MAX_DAY, FILMS, TOTAL_RUNTIME, FALLE
 # --------------------------------------------------------------------------- Paths
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 BG_PATH = os.path.join(ASSET_DIR, "middle_earth_bg.png")
+SVG_PATH = os.path.join(ASSET_DIR, "middle_earth.svg")   # vector original, sharp when zoomed
 CALIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "locations.json")
 
 # --------------------------------------------------------------------------- Layout
@@ -325,11 +330,176 @@ def scale_background(raw):
     return pygame.transform.smoothscale(raw.convert(), (MAP_W, MAP_H))
 
 
-def draw_map_background(surf, bg):
+class SharpMap:
+    """Renders the map straight from the SVG original, so it stays sharp at any
+    zoom level (the PNG only has ~1000 px to stretch).
+
+    Rendering runs in a background thread and covers a 3x3-screen area around the
+    view, so panning stays sharp and zooming re-uses the last sharp image as a
+    preview until the new one is ready. A whole-map render at OVERVIEW_SCALE x the
+    screen resolution (made once at start) bridges the gaps, e.g. right after a
+    fast zoom-out."""
+
+    PARCHMENT = (244, 238, 222)        # background colour of the PNG version
+    MARGIN = 3                         # rendered area = MARGIN x MARGIN screens
+    SETTLE_S = 0.06                    # view must be still this long before re-rendering
+    OVERVIEW_SCALE = 3                 # resolution of the whole-map fallback render
+    DOT = b"@DOT@"                     # placeholder for the road-dot length
+    DOT_PX = 0.6                       # road-dot length in screen px (shorter ones vanish)
+
+    def __init__(self, svg_bytes):
+        # Roads are drawn as zero-length dashes with round caps ("0,9"), which the
+        # SVG renderer drops. Give the dots a length per render (see _worker).
+        svg_bytes = re.sub(rb'stroke-dasharray="0,([0-9.]+)"',
+                           lambda m: b'stroke-dasharray="' + self.DOT + b',' + m.group(1) + b'"',
+                           svg_bytes)
+        head_end = svg_bytes.index(b">", svg_bytes.index(b"<svg"))
+        self.head, self.body = svg_bytes[:head_end], svg_bytes[head_end:]
+        vb = re.search(rb'viewBox="([^"]*)"', self.head).group(1).replace(b",", b" ").split()
+        self.vb_x, self.vb_y, self.vb_w, self.vb_h = (float(v) for v in vb)
+        self.best = None                # (surface, (bx, by, bw, bh)) of the latest render
+        self.ready = None               # finished render handed over by the worker thread
+        self.busy = False
+        self.lock = threading.Lock()
+        self.wanted_key = None          # view we are waiting to settle
+        self.wanted_since = 0.0
+        full = (0.0, 0.0, float(MAP_W), float(MAP_H))
+        self._worker(full, (MAP_W * self.OVERVIEW_SCALE, MAP_H * self.OVERVIEW_SCALE))
+        self.overview, self.ready = self.ready, None    # whole map, sharp up to ~3x
+
+    @classmethod
+    def load(cls):
+        if not os.path.exists(SVG_PATH):
+            return None
+        try:
+            with open(SVG_PATH, "rb") as f:
+                return cls(f.read())
+        except (OSError, ValueError, AttributeError) as exc:
+            print("Could not load map SVG, zoom stays blurry:", exc)
+            return None
+
+    # -- background rendering ------------------------------------------------
+    def _worker(self, rect, size):
+        bx, by, bw, bh = rect
+        kx, ky = self.vb_w / MAP_W, self.vb_h / MAP_H     # base pixels -> SVG units
+        px_per_unit = size[0] / (bw * kx)
+        dot = b"%.4f" % max(0.01, self.DOT_PX / px_per_unit)
+        view = b'viewBox="%.3f %.3f %.3f %.3f" width="%d" height="%d" preserveAspectRatio="none"' % (
+            self.vb_x + bx * kx, self.vb_y + by * ky, bw * kx, bh * ky, size[0], size[1])
+        try:
+            svg = pygame.image.load(io.BytesIO(re.sub(rb'viewBox="[^"]*"', view, self.head)
+                                               + self.body.replace(self.DOT, dot)), "map.svg")
+            img = pygame.Surface(svg.get_size())          # opaque, parchment behind the ink
+            img.fill(self.PARCHMENT)
+            img.blit(svg, (0, 0))
+        except (pygame.error, ValueError) as exc:
+            print("SVG render failed:", exc)
+            img = None
+        with self.lock:
+            self.ready = (img, rect)
+            self.busy = False
+
+    def _start(self, view):
+        """Render a MARGIN x MARGIN area around `view` (clamped to the map)."""
+        vx, vy, vw, vh = view
+        bw, bh = min(MAP_W, vw * self.MARGIN), min(MAP_H, vh * self.MARGIN)
+        bx = min(max(vx + vw / 2 - bw / 2, 0), MAP_W - bw)
+        by = min(max(vy + vh / 2 - bh / 2, 0), MAP_H - bh)
+        scale = MAP_W / vw                                # screen px per base px
+        size = (max(1, round(bw * scale)), max(1, round(bh * scale)))
+        self.busy = True
+        threading.Thread(target=self._worker, args=((bx, by, bw, bh), size), daemon=True).start()
+
+    def _needs_render(self, view):
+        if self.best is None:
+            return True
+        img, (bx, by, bw, bh) = self.best
+        vx, vy, vw, vh = view
+        if abs((img.get_width() / bw) / (MAP_W / vw) - 1) > 0.01:     # zoom changed
+            return True
+        return not (bx - 0.5 <= vx and vx + vw <= bx + bw + 0.5 and
+                    by - 0.5 <= vy and vy + vh <= by + bh + 0.5)
+
+    def update(self, view):
+        """Call once per frame with the visible base rect (bx, by, bw, bh)."""
+        with self.lock:
+            ready, self.ready = self.ready, None
+        if ready is not None and ready[0] is not None:
+            self.best = ready
+        if self.busy or not self._needs_render(view):
+            self.wanted_key = None
+            return
+        key = tuple(round(v, 2) for v in view)
+        now = time.monotonic()
+        if key != self.wanted_key:                         # still moving: wait a moment
+            self.wanted_key, self.wanted_since = key, now
+        elif now - self.wanted_since >= self.SETTLE_S:
+            self.wanted_key = None
+            self._start(view)
+
+    # -- drawing -------------------------------------------------------------
+    def draw(self, surf, view):
+        """Draw the map for `view`: the latest sharp render where it covers the
+        view, the whole-map overview underneath. Returns False if neither exists."""
+        if self.best is not None and _covers(self.best[1], view):
+            return self._blit_part(surf, self.best, view)
+        ok = self.overview is not None and self.overview[0] is not None
+        if ok:
+            self._blit_part(surf, self.overview, view)
+        if self.best is not None:
+            self._blit_part(surf, self.best, view)          # sharp part on top
+            ok = True
+        return ok
+
+    @staticmethod
+    def _blit_part(surf, render, view):
+        """Blit the part of `render` = (image, base rect) that lies inside `view`."""
+        img, (bx, by, bw, bh) = render
+        vx, vy, vw, vh = view
+        # intersection of the view and the rendered area, in base pixels
+        ix0, iy0 = max(vx, bx), max(vy, by)
+        ix1, iy1 = min(vx + vw, bx + bw), min(vy + vh, by + bh)
+        if ix1 <= ix0 or iy1 <= iy0:
+            return False
+        sx, sy = img.get_width() / bw, img.get_height() / bh   # image px per base px
+        dx, dy = MAP_W / vw, MAP_H / vh                         # screen px per base px
+        src = pygame.Rect(int((ix0 - bx) * sx), int((iy0 - by) * sy),
+                          max(1, int((ix1 - ix0) * sx)), max(1, int((iy1 - iy0) * sy)))
+        src = src.clip(img.get_rect())
+        dst = pygame.Rect(int((ix0 - vx) * dx), int((iy0 - vy) * dy),
+                          max(1, round((ix1 - ix0) * dx)), max(1, round((iy1 - iy0) * dy)))
+        if src.w <= 0 or src.h <= 0:
+            return False
+        if abs(src.w - dst.w) <= 1 and abs(src.h - dst.h) <= 1:
+            surf.blit(img, dst.topleft, src)                    # 1:1 - fully sharp
+        else:
+            surf.blit(pygame.transform.smoothscale(img.subsurface(src), dst.size), dst.topleft)
+        return True
+
+
+def draw_map_background(surf, bg, sharp=None):
     """Blit the (zoomed) visible portion of the map into the map area."""
     if ZOOM <= 1.0001:
         surf.blit(bg, (0, 0))
         return
+    vw, vh = MAP_W / ZOOM, MAP_H / ZOOM
+    view = (CAM_X - vw / 2, CAM_Y - vh / 2, vw, vh)         # same view as world() uses
+    if sharp is not None:
+        sharp.update(view)
+        if sharp.draw(surf, view):
+            return
+    _draw_png_crop(surf, bg)
+
+
+def _covers(rect, view):
+    bx, by, bw, bh = rect
+    vx, vy, vw, vh = view
+    return (bx - 0.5 <= vx and by - 0.5 <= vy and
+            vx + vw <= bx + bw + 0.5 and vy + vh <= by + bh + 0.5)
+
+
+def _draw_png_crop(surf, bg):
+    """Quick but blurry: stretch the matching crop of the 1000 px PNG."""
     sw, sh = MAP_W / ZOOM, MAP_H / ZOOM
     sx = int(min(max(CAM_X - sw / 2, 0), MAP_W - sw))
     sy = int(min(max(CAM_Y - sh / 2, 0), MAP_H - sh))
@@ -1327,6 +1497,8 @@ def main():
         run_calibration(screen, bg, fonts)
         return
 
+    sharp = SharpMap.load()                      # None -> zoom falls back to the PNG
+
     clock = pygame.time.Clock()
     minute = 0.0                 # current position in the trilogy runtime
     speed = 60.0                 # playback factor (film-seconds per real second)
@@ -1398,7 +1570,7 @@ def main():
                 minute = TOTAL_RUNTIME; playing = False
 
         day = minute_to_day(minute)
-        draw_map_background(screen, bg)
+        draw_map_background(screen, bg, sharp)
         screen.set_clip(pygame.Rect(0, 0, MAP_W, MAP_H))   # keep markers inside the map
         draw_waypoints(screen)
         draw_tracks(screen, day)

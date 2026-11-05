@@ -85,6 +85,11 @@ Use the **zoom slider** (bottom-right, 1× … 100×, logarithmic) or the **mous
 wheel** over the map to zoom toward the cursor. When zoomed in, **drag the map**
 to pan around; press `0` to reset to the full map. The dots, routes and the
 Boromir medallion keep a constant screen size so they stay readable at any zoom.
+When zoomed in, the map is re-drawn from the vector original
+(`assets/middle_earth.svg`), so it stays sharp at every zoom level. Rendering
+happens in the background and covers a little more than the visible area, so
+panning stays sharp; right after a zoom step the previous image is briefly
+scaled until the new one is ready (a fraction of a second).
 
 ## Fine-tuning place positions (calibration)
 
@@ -105,6 +110,8 @@ defaults automatically.
 - `data.py` — places, group routes and events. **Edit here** to change locations,
   dates or event texts.
 - `assets/middle_earth_bg.png` — background map (composited onto parchment).
+- `assets/middle_earth.svg` — vector original of the map, used for sharp zooming
+  (optional: without it, zooming falls back to the PNG).
 - `assets/MAP_LICENSE.txt` — source & licence of the map.
 - `locations.json` — created only by calibration (optional).
 
