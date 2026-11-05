@@ -334,12 +334,15 @@ class SharpMap:
     MARGIN = 3                         # rendered area = MARGIN x MARGIN screens
     SETTLE_S = 0.06                    # view must be still this long before re-rendering
     OVERVIEW_SCALE = 3                 # resolution of the whole-map fallback render
+    DOT = b"@DOT@"                     # placeholder for the road-dot length
+    DOT_PX = 0.6                       # road-dot length in screen px (shorter ones vanish)
 
     def __init__(self, svg_bytes):
         # Roads are drawn as zero-length dashes with round caps ("0,9"), which the
-        # SVG renderer drops - give the dots a tiny length so they show up.
+        # SVG renderer drops. Give the dots a length per render (see _worker).
         svg_bytes = re.sub(rb'stroke-dasharray="0,([0-9.]+)"',
-                           lambda m: b'stroke-dasharray="0.01,' + m.group(1) + b'"', svg_bytes)
+                           lambda m: b'stroke-dasharray="' + self.DOT + b',' + m.group(1) + b'"',
+                           svg_bytes)
         head_end = svg_bytes.index(b">", svg_bytes.index(b"<svg"))
         self.head, self.body = svg_bytes[:head_end], svg_bytes[head_end:]
         vb = re.search(rb'viewBox="([^"]*)"', self.head).group(1).replace(b",", b" ").split()
@@ -369,11 +372,13 @@ class SharpMap:
     def _worker(self, rect, size):
         bx, by, bw, bh = rect
         kx, ky = self.vb_w / MAP_W, self.vb_h / MAP_H     # base pixels -> SVG units
+        px_per_unit = size[0] / (bw * kx)
+        dot = b"%.4f" % max(0.01, self.DOT_PX / px_per_unit)
         view = b'viewBox="%.3f %.3f %.3f %.3f" width="%d" height="%d" preserveAspectRatio="none"' % (
             self.vb_x + bx * kx, self.vb_y + by * ky, bw * kx, bh * ky, size[0], size[1])
         try:
             svg = pygame.image.load(io.BytesIO(re.sub(rb'viewBox="[^"]*"', view, self.head)
-                                               + self.body), "map.svg")
+                                               + self.body.replace(self.DOT, dot)), "map.svg")
             img = pygame.Surface(svg.get_size())          # opaque, parchment behind the ink
             img.fill(self.PARCHMENT)
             img.blit(svg, (0, 0))
