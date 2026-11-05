@@ -240,6 +240,16 @@ def current_event(minute):
     return cur
 
 
+def track_label(track, day):
+    """Legend name of a group on `day` (a group can be renamed, e.g. when
+    Merry & Pippin part ways and only Pippin goes on with this route)."""
+    name = track["name"]
+    for d, label in track.get("label", []):
+        if day >= d:
+            name = label
+    return name
+
+
 def nearest_location(track, day):
     # Only named keyframes count as "places" (skip raw (x, y) curve waypoints).
     named = [kf for kf in track["keyframes"] if isinstance(kf[1], str)]
@@ -906,11 +916,12 @@ def draw_panel(surf, fonts, minute, day, playing):
         col = track["color"] if active else (74, 70, 66)
         legend_seal(surf, (px + pad + 7, y + 9), col, track.get("icon", "star"))
         name_col = HUD_TEXT if active else (104, 98, 92)
-        surf.blit(fonts["panel_med"].render(track["name"], True, name_col), (px + pad + 22, y)); y += 23
+        surf.blit(fonts["panel_med"].render(track_label(track, day), True, name_col),
+                  (px + pad + 22, y)); y += 23
         if active:
             sub = "at " + nearest_location(track, day)
         elif day < track["keyframes"][0][0]:
-            sub = "- yet to set out -"
+            sub = "- " + track.get("before", "yet to set out") + " -"
         else:
             sub = "- journey ended -"
         sub_col = HUD_DIM if active else (90, 86, 82)

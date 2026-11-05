@@ -42,6 +42,7 @@ LOCATIONS = {
     "Erech":            (0.493, 0.671),
     "Pelargir":         (0.628, 0.786),
     "Minas Tirith":     (0.639, 0.699),
+    "Cormallen":        (0.650, 0.664),       # Field of Cormallen, Ithilien
 }
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,15 @@ ROAD_ERECH_PELARGIR = [(0.517, 0.694), (0.520, 0.705), (0.528, 0.712), (0.536, 0
                        (0.615, 0.793)]
 # Up the Anduin with the captured corsair ships
 ANDUIN_PELARGIR_MINAS_TIRITH = [(0.636, 0.776), (0.640, 0.752), (0.641, 0.729)]
+# Helm's Deep -> along the Isen -> Isengard (the ride to meet Saruman, 4-5 March)
+HELMS_DEEP_ISENGARD = [(0.449, 0.585), (0.446, 0.565)]
+# Isengard -> Dol Baran -> across the Westfold to Edoras (Gandalf & Pippin ride by night)
+ISENGARD_EDORAS = [(0.452, 0.556), (0.466, 0.585), (0.482, 0.611)]
+# Cirith Ungol -> north along the Morgai -> Isenmouthe -> east on the road -> Mount Doom
+MORGAI_TO_MOUNT_DOOM = [(0.676, 0.676), (0.684, 0.662), (0.694, 0.652), (0.704, 0.648),
+                        (0.712, 0.652), (0.712, 0.660)]
+# Field of Cormallen -> by boat down the Anduin -> Minas Tirith (late April)
+CORMALLEN_MINAS_TIRITH = [(0.646, 0.676), (0.645, 0.690)]
 
 
 def _along(d0, d1, points):
@@ -104,7 +114,7 @@ def _along(d0, d1, points):
 TRACKS = [
     {
         "name": "The Fellowship",
-        "icon": "star",               # emblem on the map seal and in the legend
+        "icon": "star",                 # emblem on the map seal and in the legend
         "color": (232, 198, 92),
         "members": "Frodo, Sam, Merry, Pippin, Aragorn, Legolas, Gimli, Boromir, Gandalf",
         # A keyframe target is a place name OR a raw (x, y) waypoint that bends the
@@ -117,17 +127,21 @@ TRACKS = [
             (13,  "Weathertop"),
             *_along(13, 27, ROAD_WEATHERTOP_FORD),
             (27,  "Rivendell"),
-            (93,  "Rivendell"),
-            *_along(93, 104, RIVENDELL_HOLLIN),
-            (104, "Caradhras"),
-            (108, (0.462, 0.375)),       # turned back from the snow, south to Moria
-            (112, "Moria"),
-            *_along(112, 116, MORIA_LORIEN),
-            (116, "Lothlorien"),
-            (146, "Lothlorien"),
-            *_along(146, 152, ANDUIN_LORIEN_ARGONATH),
-            (152, "Argonath"),
-            (156, "Amon Hen"),
+            (93,  "Rivendell"),          # 25 Dec: the Company sets out
+            *_along(93, 107, RIVENDELL_HOLLIN),   # 8 Jan: Hollin
+            (110, "Caradhras"),          # 11-12 Jan: defeated by the snow
+            (111, "Caradhras"),
+            (111.5, (0.462, 0.375)),     # back down, south to the West-gate
+            (112, "Moria"),              # 13 Jan: into Moria at nightfall
+            (114.5, (0.490, 0.386)),     # 15 Jan: Bridge of Khazad-dum, out of the East-gate
+            (115, (0.500, 0.395)),       # Dimrill Dale
+            (115.7, (0.510, 0.408)),     # along the Silverlode
+            (116, "Lothlorien"),         # 17 Jan: Caras Galadhon
+            (146, "Lothlorien"),         # 16 Feb: farewell
+            *_along(146, 154.5, ANDUIN_LORIEN_ARGONATH),
+            (154.5, "Argonath"),         # 25 Feb: the Gates of Argonath
+            (155, "Amon Hen"),           # camp at Parth Galen
+            (156, "Amon Hen"),           # 26 Feb: the Breaking of the Fellowship
         ],
     },
     {
@@ -137,20 +151,24 @@ TRACKS = [
         "members": "Frodo, Sam (and Gollum)",
         "keyframes": [
             (156, "Amon Hen"),
-            (157, (0.598, 0.598)),       # across Nen Hithoel to the eastern shore
-            (159, "Emyn Muil"),
+            (156.5, (0.598, 0.598)),     # across Nen Hithoel to the eastern shore
+            (159, "Emyn Muil"),          # lost in the hills, Gollum caught
             (163, "Dead Marshes"),
-            (165, "Black Gate"),
+            (165, "Black Gate"),         # 5 Mar: the Morannon is shut
             *_along(165, 167, ROAD_MINAS_TIRITH_BLACK_GATE[-1:4:-1]),   # south into Ithilien
-            (167, "Ithilien"),
-            *_along(167, 171, ROAD_MINAS_TIRITH_BLACK_GATE[3:1:-1]),    # to the Crossroads
-            (172, "Minas Morgul"),
-            (173, "Cirith Ungol"),
-            (181, "Cirith Ungol"),
-            (183, (0.690, 0.680)),       # across the plain of Gorgoroth
-            (185, "Mount Doom"),
-            (190, "Minas Tirith"),       # carried by the Eagles
-            (222, "Minas Tirith"),
+            (167, "Ithilien"),           # 7 Mar: taken by Faramir to Henneth Annun
+            (168, "Ithilien"),
+            *_along(168, 170, ROAD_MINAS_TIRITH_BLACK_GATE[3:1:-1]),
+            (170, (0.657, 0.698)),       # 10 Mar: the Crossroads
+            (171, "Minas Morgul"),       # the stairs above the Morgul Vale
+            (172, "Cirith Ungol"),       # 12-14 Mar: Shelob, the tower, Sam's rescue
+            (175, "Cirith Ungol"),
+            *_along(175, 185, MORGAI_TO_MOUNT_DOOM),   # north along the Morgai, then east
+            (185, "Mount Doom"),         # 25 Mar: the Ring is destroyed
+            (186, "Cormallen"),          # carried by the Eagles
+            (220, "Cormallen"),
+            *_along(220, 222, CORMALLEN_MINAS_TIRITH),
+            (222, "Minas Tirith"),       # 1 May: the coronation
         ],
     },
     {
@@ -160,46 +178,80 @@ TRACKS = [
         "members": "Aragorn, Legolas, Gimli",
         "keyframes": [
             (156, "Amon Hen"),
-            *_along(156, 159, EMNET_TO_FANGORN),   # pursuit across the Emnet of Rohan
-            (159, "Fangorn"),
-            (160.5, (0.505, 0.575)),     # riding with Gandalf across the Entwash
-            (162, "Edoras"),
+            *_along(156, 160.5, EMNET_TO_FANGORN),   # the pursuit across the Emnet
+            (161, "Fangorn"),            # 1 Mar: they meet Gandalf the White
+            (161.5, (0.505, 0.575)),     # riding with Gandalf across the Entwash
+            (162, "Edoras"),             # 2 Mar: Theoden healed
             *_along(162, 163, ROAD_EDORAS_HELMS_DEEP),
-            (163, "Helm's Deep"),
-            (165, "Helm's Deep"),
-            *_along(165, 166, ROAD_EDORAS_HELMS_DEEP[::-1]),
-            (166, "Edoras"),
-            (167, "Dunharrow"),
-            (168, "Erech"),              # Paths of the Dead, under the mountains
-            *_along(168, 170, ROAD_ERECH_PELARGIR),
-            (170, "Pelargir"),
-            *_along(170, 175, ANDUIN_PELARGIR_MINAS_TIRITH),  # with the corsair ships
-            (175, "Minas Tirith"),
-            *_along(175, 185, ROAD_MINAS_TIRITH_BLACK_GATE),
+            (163, "Helm's Deep"),        # 3-4 Mar: the battle of the Hornburg
+            (164, "Helm's Deep"),
+            *_along(164, 165, HELMS_DEEP_ISENGARD),
+            (165, "Isengard"),           # 5 Mar: reunion with Merry & Pippin
+            (165.3, (0.452, 0.556)),     # Dol Baran (the palantir)
+            *_along(165.3, 166, HELMS_DEEP_ISENGARD[::-1]),
+            (166, "Helm's Deep"),        # 6 Mar: the Grey Company joins Aragorn
+            *_along(166, 166.6, ROAD_EDORAS_HELMS_DEEP[::-1]),
+            (166.6, "Edoras"),
+            (167, "Dunharrow"),          # 7 Mar
+            (168, "Erech"),              # 8 Mar: Paths of the Dead
+            *_along(168, 173, ROAD_ERECH_PELARGIR),
+            (173, "Pelargir"),           # 13 Mar: the Corsair fleet taken
+            *_along(173, 175, ANDUIN_PELARGIR_MINAS_TIRITH),
+            (175, "Minas Tirith"),       # 15 Mar: the Pelennor Fields
+            (178, "Minas Tirith"),       # 18 Mar: the Host of the West marches
+            *_along(178, 185, ROAD_MINAS_TIRITH_BLACK_GATE),
+            (185, "Black Gate"),         # 25 Mar: the last battle
+            *_along(185, 186, ROAD_MINAS_TIRITH_BLACK_GATE[:4:-1]),
+            (186, "Cormallen"),
+            (220, "Cormallen"),
+            *_along(220, 222, CORMALLEN_MINAS_TIRITH),
+            (222, "Minas Tirith"),       # 1 May: crowned King Elessar
+        ],
+    },
+    {
+        "name": "Pippin",
+        "label": [(0, "Merry & Pippin"), (165, "Pippin")],   # name shown in the legend
+        "icon": "leaf",
+        "color": (108, 190, 110),
+        "members": "Merry & Pippin until Isengard, then Pippin (with Gandalf)",
+        "keyframes": [
+            (156, "Amon Hen"),
+            *_along(156, 159, EMNET_TO_FANGORN),   # carried off by the Uruk-hai
+            (159, "Fangorn"),            # 29 Feb: escape, Treebeard
+            (161, (0.470, 0.522)),       # the Entmoot, then the march on Isengard
+            (163, "Isengard"),
+            (165, "Isengard"),           # 5 Mar: reunion; the palantir at Dol Baran
+            *_along(165, 166.5, ISENGARD_EDORAS),  # riding with Gandalf on Shadowfax
+            (166.5, "Edoras"),
+            *_along(166.5, 169, ROAD_EDORAS_MINAS_TIRITH),
+            (169, "Minas Tirith"),       # 9 Mar
+            (178, "Minas Tirith"),       # marches with the Host of the West
+            *_along(178, 185, ROAD_MINAS_TIRITH_BLACK_GATE),
             (185, "Black Gate"),
-            *_along(185, 190, ROAD_MINAS_TIRITH_BLACK_GATE[::-1]),
-            (190, "Minas Tirith"),
+            *_along(185, 186, ROAD_MINAS_TIRITH_BLACK_GATE[:4:-1]),
+            (186, "Cormallen"),
+            (220, "Cormallen"),
+            *_along(220, 222, CORMALLEN_MINAS_TIRITH),
             (222, "Minas Tirith"),
         ],
     },
     {
-        "name": "Merry & Pippin",
+        "name": "Merry",
+        "before": "with Pippin",         # legend text before this route starts
         "icon": "leaf",
-        "color": (108, 190, 110),
-        "members": "Merry, Pippin (split from day 165: Pippin -> Minas Tirith, Merry with Rohan)",
+        "color": (205, 140, 70),
+        "members": "Merry (esquire of Rohan, rides with Theoden)",
         "keyframes": [
-            (156, "Amon Hen"),
-            *_along(156, 159, EMNET_TO_FANGORN),   # carried off by the Uruk-hai
-            (159, "Fangorn"),
-            (161, (0.470, 0.522)),       # with Treebeard to the western edge of the forest
-            (163, "Isengard"),
-            (165, "Isengard"),
-            (165.5, (0.470, 0.585)),     # down into the Westfold
-            (166, "Edoras"),
-            *_along(166, 169, ROAD_EDORAS_MINAS_TIRITH),   # east to Gondor
-            (169, "Minas Tirith"),
-            (175, "Minas Tirith"),
-            (222, "Minas Tirith"),
+            (165, "Isengard"),           # 5 Mar: splits from Pippin
+            *_along(165, 166, HELMS_DEEP_ISENGARD[::-1]),
+            (166, "Helm's Deep"),
+            *_along(166, 168, ROAD_EDORAS_HELMS_DEEP[::-1]),
+            (168, "Edoras"),
+            (169, "Dunharrow"),          # 9 Mar: Theoden comes to Dunharrow
+            (170, "Edoras"),             # 10 Mar: the muster rides east
+            *_along(170, 175, ROAD_EDORAS_MINAS_TIRITH),
+            (175, "Minas Tirith"),       # 15 Mar: the Pelennor, the Witch-king falls
+            (222, "Minas Tirith"),       # Houses of Healing, then the coronation
         ],
     },
     {
@@ -209,16 +261,24 @@ TRACKS = [
         "members": "Gandalf (returned after his fall in Moria)",
         "keyframes": [
             (159, "Fangorn"),
-            (160.5, (0.505, 0.575)),
+            (161, "Fangorn"),            # 1 Mar: meets Aragorn, Legolas & Gimli
+            (161.5, (0.505, 0.575)),
             (162, "Edoras"),
-            (165, "Edoras"),
-            *_along(165, 169, ROAD_EDORAS_MINAS_TIRITH),   # riding east with Pippin
+            (163, (0.466, 0.585)),       # 3 Mar: rides off to find Erkenbrand
+            (164, "Helm's Deep"),        # 4 Mar: arrives at dawn with Erkenbrand
+            *_along(164, 165, HELMS_DEEP_ISENGARD),
+            (165, "Isengard"),           # 5 Mar: Saruman's staff is broken
+            *_along(165, 166.5, ISENGARD_EDORAS),  # riding with Pippin on Shadowfax
+            (166.5, "Edoras"),
+            *_along(166.5, 169, ROAD_EDORAS_MINAS_TIRITH),
             (169, "Minas Tirith"),
-            (175, "Minas Tirith"),
-            *_along(175, 185, ROAD_MINAS_TIRITH_BLACK_GATE),
+            (178, "Minas Tirith"),
+            *_along(178, 185, ROAD_MINAS_TIRITH_BLACK_GATE),
             (185, "Black Gate"),
-            *_along(185, 190, ROAD_MINAS_TIRITH_BLACK_GATE[::-1]),
-            (190, "Minas Tirith"),
+            *_along(185, 186, ROAD_MINAS_TIRITH_BLACK_GATE[:4:-1]),
+            (186, "Cormallen"),
+            (220, "Cormallen"),
+            *_along(220, 222, CORMALLEN_MINAS_TIRITH),
             (222, "Minas Tirith"),
         ],
     },
@@ -279,7 +339,7 @@ EVENTS = [
     (93,  130, "Dec 25, 3018", "The Fellowship of the Ring",
      "The Fellowship sets out",
      "Nine companions leave Rivendell heading south."),
-    (104, 142, "Jan 11, 3019", "The Fellowship of the Ring",
+    (110, 142, "Jan 11, 3019", "The Fellowship of the Ring",
      "Caradhras",
      "Snow forces the Fellowship to take the road through Moria."),
     (112, 152, "Jan 13, 3019", "The Fellowship of the Ring",
@@ -310,9 +370,13 @@ EVENTS = [
     (164, 425, "Mar 4, 3019", "The Two Towers",
      "Battle of Helm's Deep",
      "Rohan holds the fortress; the Ents overrun Isengard."),
+    (165, 432, "Mar 5, 3019", "The Two Towers",
+     "Reunion at Isengard",
+     "Theoden, Gandalf and the three hunters find Merry & Pippin at the ruined gates."),
     (165, 440, "Mar 5, 3019", "The Two Towers",
      "At the Black Gate",
-     "The gate is shut - Gollum knows another way. Pippin looks into the palantir."),
+     "The gate is shut - Gollum knows another way. Pippin looks into the palantir "
+     "and rides with Gandalf to Minas Tirith; Merry stays with Rohan."),
     (167, 458, "Mar 7, 3019", "The Two Towers",
      "Ithilien & Faramir",
      "Frodo & Sam are caught by Faramir's rangers."),
@@ -321,7 +385,7 @@ EVENTS = [
      "The white city of Gondor prepares against Mordor."),
     (172, 560, "Mar 12, 3019", "The Return of the King",
      "Cirith Ungol",
-     "Shelob lurks in the pass. Aragorn takes the Paths of the Dead."),
+     "Shelob lurks in the pass. In the south, Aragorn races the Corsairs to Pelargir."),
     (175, 640, "Mar 15, 3019", "The Return of the King",
      "Battle of the Pelennor Fields",
      "Theoden falls, the Witch-king is slain, Aragorn arrives with the fleet."),
